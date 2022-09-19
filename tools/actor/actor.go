@@ -61,6 +61,10 @@ func (a *Actor) String() string {
 	return fmt.Sprintf("[A %s]", a.actorName)
 }
 
+func (a *Actor) GetQueue() *messagequeue.MessageQueue {
+	return &a.queue
+}
+
 // SendMessage
 func (a *Actor) SendMessage(msg message.Message, res chan message.Message) {
 	a.queue.Send(msg, res)

@@ -53,3 +53,7 @@ act.SendMessage(req, resChan)
 
 <-resChan
 ```
+
+Note you may also add the actor as a compound to the struct instead of embedding it (hides the Actor struct from the outside)
+
+Also you may want to keep your method structures in a separate file to avoid cyclic dependencies and only forward the Actor's queue to foreign actors and elements.
