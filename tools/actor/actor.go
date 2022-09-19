@@ -9,42 +9,45 @@ import (
 
 type ActorStop struct{}
 
+// That's to embed in a method struct. It's useless but it's documentary.
+type NoReply struct{}
+
 type Actor struct {
-	ActorName             string
-	Queue                 messagequeue.MessageQueue
-	ReceiveMessageHandler func(msg message.Message)
+	actorName             string
+	queue                 messagequeue.MessageQueue
+	receiveMessageHandler func(msg message.Message)
 }
 
 // New
 func New(name string) *Actor {
 	return &Actor{
-		ActorName: name,
-		Queue:     *messagequeue.New(name),
+		actorName: name,
+		queue:     *messagequeue.New(name),
 	}
 }
 
 func (a *Actor) Stop() {
-	a.Queue.Stop()
+	a.queue.Stop()
 }
 
 // Reply
 func (a *Actor) Reply(msg message.Message) {
-	a.Queue.GetActorChan() <- msg
+	a.queue.GetActorChan() <- msg
 }
 
 // Start
 func (a *Actor) Start() {
-	a.Queue.Start()
+	a.queue.Start()
 	go func() {
 		for {
-			msg := <-a.Queue.GetActorChan()
+			msg := <-a.queue.GetActorChan()
 			switch msg.TargetMethod.(type) {
 			case ActorStop:
 				a.Stop()
 				return
 			default:
-				if a.ReceiveMessageHandler != nil {
-					a.ReceiveMessageHandler(msg)
+				if a.receiveMessageHandler != nil {
+					a.receiveMessageHandler(msg)
 				} else {
 					fmt.Println("Actor: ReceiveMessage is nil")
 				}
@@ -55,10 +58,18 @@ func (a *Actor) Start() {
 
 // String
 func (a *Actor) String() string {
-	return fmt.Sprintf("[A %s]", a.ActorName)
+	return fmt.Sprintf("[A %s]", a.actorName)
 }
 
 // SendMessage
 func (a *Actor) SendMessage(msg message.Message, res chan message.Message) {
-	a.Queue.Send(msg, res)
+	a.queue.Send(msg, res)
+}
+
+func (a *Actor) SendMessageAndForget(msg message.Message) {
+	a.queue.Send(msg, nil)
+}
+
+func (a *Actor) SetReceiveMessageHandler(handler func(msg message.Message)) {
+	a.receiveMessageHandler = handler
 }

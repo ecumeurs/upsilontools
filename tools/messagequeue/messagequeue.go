@@ -45,7 +45,9 @@ func (mq *MessageQueue) Start() {
 					mq.actorChan <- msg.Message
 				}
 			case msg := <-mq.actorChan:
-				mq.currentMessage.Callback <- msg
+				if mq.currentMessage.Callback != nil {
+					mq.currentMessage.Callback <- msg
+				}
 				mq.currentMessage = nil
 				mq.messages = mq.messages[1:]
 				if len(mq.messages) > 0 {

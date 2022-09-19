@@ -21,7 +21,7 @@ func NewTest(name string) *TestActor {
 	r := &TestActor{
 		Actor: *New(name),
 	}
-	r.ReceiveMessageHandler = r.ReceiveMessage
+	r.receiveMessageHandler = r.ReceiveMessage
 	return r
 }
 
