@@ -74,6 +74,14 @@ func (mq *MessageQueue) Send(msg message.Message, callback chan message.Message)
 	}
 }
 
+// Send a message to the message queue and forget (wont reply)
+func (mq *MessageQueue) SendAndForget(msg message.Message) {
+	mq.inputChan <- internalMessage{
+		Message:  msg,
+		Callback: nil,
+	}
+}
+
 // GetActorChan
 func (mq *MessageQueue) GetActorChan() chan message.Message {
 	return mq.actorChan
