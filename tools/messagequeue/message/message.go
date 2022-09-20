@@ -36,6 +36,15 @@ func New() Message {
 	}
 }
 
+func Create(Content, TargetMethod, CallbackMethod interface{}) Message {
+	msg := New()
+	msg.Content = Content
+	msg.TargetMethod = TargetMethod
+	msg.CallbackMethod = CallbackMethod
+
+	return msg
+}
+
 // NewReply
 func (request *Message) Reply() Message {
 	return Message{
