@@ -39,15 +39,19 @@ func (a *TestActor) testActorRequestWithParam(msg message.Message) {
 	fmt.Println("testActorRequestWithParam")
 }
 
-func (a *TestActor) ReceiveMessage(msg message.Message) {
+func (a *TestActor) ReceiveMessage(msg message.Message) bool {
 	switch msg.TargetMethod.(type) {
 	case TestActorRequest:
 		a.testActorRequest(msg)
+		return true
 	case TestActorRequestError:
 		a.testActorRequestError(msg)
+		return true
 	case TestActorRequestWithParam:
 		a.testActorRequestWithParam(msg)
+		return true
 	}
+	return false
 }
 
 func TestActorSendMessage(t *testing.T) {

@@ -2,6 +2,7 @@ package messagequeue
 
 import (
 	"fmt"
+	"reflect"
 
 	"github.com/ecumeurs/upsilontools/tools/messagequeue/message"
 )
@@ -36,15 +37,19 @@ func New(name string) *MessageQueue {
 // When a message is received, it will be sent to the actorChan if no other message are being processed at the moment.
 func (mq *MessageQueue) Start() {
 	go func() {
+		fmt.Println("Starting message queue", mq.Name)
 		for {
 			select {
 			case msg := <-mq.inputChan:
+				fmt.Println("MessageQueue [", mq.Name, "]: Received message", msg.Message.String(), reflect.TypeOf(msg.Message.TargetMethod))
 				mq.messages = append(mq.messages, msg)
 				if mq.currentMessage == nil {
 					mq.currentMessage = &msg
 					mq.actorChan <- msg.Message
 				}
 			case msg := <-mq.actorChan:
+				fmt.Println("MessageQueue [", mq.Name, "]: Reply Received", msg.String(), reflect.TypeOf(msg.TargetMethod))
+
 				if mq.currentMessage.Callback != nil {
 					mq.currentMessage.Callback <- msg
 				}
@@ -55,6 +60,7 @@ func (mq *MessageQueue) Start() {
 					mq.actorChan <- mq.currentMessage.Message
 				}
 			case <-mq.stopChan:
+				fmt.Println("MessageQueue [", mq.Name, "]: Stopping")
 				return
 			}
 		}
@@ -82,7 +88,7 @@ func (mq *MessageQueue) SendAndForget(msg message.Message) {
 	}
 }
 
-// GetActorChan
+// GetActorChan That's the reply channel
 func (mq *MessageQueue) GetActorChan() chan message.Message {
 	return mq.actorChan
 }
