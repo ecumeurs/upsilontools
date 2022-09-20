@@ -8,6 +8,9 @@ import (
 )
 
 type ActorStop struct{}
+type ActorError struct {
+	Err error
+}
 
 // That's to embed in a method struct. It's useless but it's documentary.
 type NoReply struct{}
@@ -16,6 +19,8 @@ type Actor struct {
 	actorName             string
 	queue                 messagequeue.MessageQueue
 	receiveMessageHandler func(msg message.Message)
+	replyMessageHandler   func(msg message.Message)
+	CallbackChan          chan message.Message
 }
 
 // New
@@ -35,22 +40,33 @@ func (a *Actor) Reply(msg message.Message) {
 	a.queue.GetActorChan() <- msg
 }
 
+func (a *Actor) NoReply(msg message.Message) {
+	a.queue.GetActorChan() <- msg
+}
+
+func (a *Actor) processMessage(msg message.Message, handler func(msg message.Message)) {
+	switch msg.TargetMethod.(type) {
+	case ActorStop:
+		a.Stop()
+	default:
+		if a.receiveMessageHandler != nil {
+			handler(msg)
+		} else {
+			fmt.Println("Actor: ReceiveMessage is nil")
+		}
+	}
+}
+
 // Start
 func (a *Actor) Start() {
 	a.queue.Start()
 	go func() {
 		for {
-			msg := <-a.queue.GetActorChan()
-			switch msg.TargetMethod.(type) {
-			case ActorStop:
-				a.Stop()
-				return
-			default:
-				if a.receiveMessageHandler != nil {
-					a.receiveMessageHandler(msg)
-				} else {
-					fmt.Println("Actor: ReceiveMessage is nil")
-				}
+			select {
+			case msg := <-a.queue.GetActorChan():
+				a.processMessage(msg, a.receiveMessageHandler)
+			case msg := <-a.CallbackChan:
+				a.processMessage(msg, a.replyMessageHandler)
 			}
 		}
 	}()
@@ -76,4 +92,8 @@ func (a *Actor) SendMessageAndForget(msg message.Message) {
 
 func (a *Actor) SetReceiveMessageHandler(handler func(msg message.Message)) {
 	a.receiveMessageHandler = handler
+}
+
+func (a *Actor) SetReplyMessageHandler(handler func(msg message.Message)) {
+	a.replyMessageHandler = handler
 }
