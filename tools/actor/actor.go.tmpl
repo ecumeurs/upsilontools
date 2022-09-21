@@ -1,0 +1,58 @@
+package {PKG}
+
+// USAGE: 
+// replace {PKG} with the package name
+// replace {STRUCT} with the main actor struct name.
+// replace {STRUCTMTHD} with the main actor struct method package name.
+
+
+import (
+	"fmt"
+
+	"github.com/ecumeurs/upsilontools/tools/actor"
+	"github.com/ecumeurs/upsilontools/tools/messagequeue/message"
+	"github.com/google/uuid"
+)
+
+type {STRUCT} struct {
+	act            *actor.Actor
+}
+
+// New
+func New() *{STRUCT} {
+	ctrl := &{STRUCT}{
+	}
+
+	ctrl.act = actor.New(fmt.Sprintf("{STRUCT}"))
+	ctrl.act.SetReceiveMessageHandler(ctrl.handleMessage)
+	ctrl.act.SetReplyMessageHandler(ctrl.handleReply)
+	ctrl.act.Start()
+
+	return ctrl
+}
+
+func (c *{STRUCT}) handleMessage(msg message.Message) bool {
+	switch msg.TargetMethod.(type) {
+	case {STRUCTMTHD}.XXX:
+		return true
+	}
+	return false
+}
+
+func (c *{STRUCT}) handleReply(msg message.Message) bool {
+	switch msg.TargetMethod.(type) {
+	case {STRUCTMTHD}.XXX:
+		return true
+	}
+	return false
+}
+
+// Implement the actor.Communication interface
+// Notify Actor
+func (c *{STRUCT}) NotifyActor(msg message.Message) {
+	c.act.Notify(msg)
+}
+
+func (c *{STRUCT}) SendActor(msg message.Message, callback chan message.Message) {
+	c.act.Send(msg, callback)
+}

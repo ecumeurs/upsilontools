@@ -14,6 +14,9 @@ func NewIntRange(start, end int) IntRange {
 }
 
 func (r IntRange) Random() int {
+	if r.Start == r.End {
+		return r.Start
+	}
 	return r.Start + rand.Intn(r.End-r.Start)
 }
 

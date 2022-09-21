@@ -64,7 +64,7 @@ func TestActorSendMessage(t *testing.T) {
 	req := message.New()
 	req.TargetMethod = TestActorRequest{}
 
-	testActor.SendMessage(req, resChan)
+	testActor.Send(req, resChan)
 
 	<-resChan
 
