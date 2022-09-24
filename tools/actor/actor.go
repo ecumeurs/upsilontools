@@ -19,6 +19,14 @@ type Communication interface {
 	SendActor(msg message.Message, callback chan message.Message)
 }
 
+// Expect actors to be manageable.
+type Manageable interface {
+	Communication
+	Start()
+	Stop()
+	PrepareToStop() chan bool
+}
+
 // Default methods
 type ActorStarted struct {
 	NoReply
