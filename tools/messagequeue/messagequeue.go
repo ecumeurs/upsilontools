@@ -16,7 +16,8 @@ type internalMessage struct {
 type MessageQueue struct {
 	Name                  string
 	inputChan             chan internalMessage
-	actorChan             chan message.Message
+	executorReplyChan     chan message.Message
+	executorChan          chan message.Message
 	stopChan              chan bool
 	doneChan              chan bool // filled when the queue is empty
 	dontAcceptNewMessages bool
@@ -32,7 +33,8 @@ func New(name string) *MessageQueue {
 	mq := &MessageQueue{
 		Name:                  name,
 		inputChan:             make(chan internalMessage),
-		actorChan:             make(chan message.Message),
+		executorReplyChan:     make(chan message.Message),
+		executorChan:          make(chan message.Message),
 		stopChan:              make(chan bool),
 		doneChan:              make(chan bool),
 		dontAcceptNewMessages: false,
@@ -45,8 +47,29 @@ func New(name string) *MessageQueue {
 	return mq
 }
 
+// printStack debug function
+func (mq *MessageQueue) PrintStack() {
+	// format all pending messages as a string
+	var pendingMessages string
+	for _, msg := range mq.messages {
+		pendingMessages += fmt.Sprintf("%s - %s,", msg.Message.String(), reflect.TypeOf(msg.Message.TargetMethod).String())
+	}
+
+	var currentMessage string
+	if mq.currentMessage != nil {
+		currentMessage = mq.currentMessage.Message.String()
+	} else {
+		currentMessage = "None"
+	}
+
+	mq.logger.WithFields(logrus.Fields{
+		"messages": pendingMessages,
+		"current":  currentMessage,
+	}).Info("Stack")
+}
+
 // Start a thread that will expect input messages to come in, and will store them in the messages slice
-// When a message is received, it will be sent to the actorChan if no other message are being processed at the moment.
+// When a message is received, it will be sent to the executorReplyChan if no other message are being processed at the moment.
 func (mq *MessageQueue) Start() {
 	go func() {
 		mq.logger.Info("Starting message queue")
@@ -59,18 +82,26 @@ func (mq *MessageQueue) Start() {
 				}
 				mq.logger.WithFields(logrus.Fields{
 					"message":      msg.Message.String(),
-					"message_type": reflect.TypeOf(msg.Message.TargetMethod).String()}).Debug("Received message")
+					"message_type": reflect.TypeOf(msg.Message.TargetString())}).Debug("Received message")
 				mq.messages = append(mq.messages, msg)
 				if mq.currentMessage == nil {
 					mq.currentMessage = &msg
-					mq.actorChan <- msg.Message
+					mq.logger.WithFields(logrus.Fields{
+						"message":      msg.Message.String(),
+						"message_type": msg.Message.TargetString()}).Debug("Executing message")
+
+					mq.executorChan <- msg.Message
 				}
-			case msg := <-mq.actorChan:
+			case msg := <-mq.executorReplyChan:
 				mq.logger.WithFields(logrus.Fields{
 					"message":      msg.String(),
-					"message_type": reflect.TypeOf(msg.TargetMethod)}).Debug("Reply Received")
+					"message_type": msg.TargetString()}).Debug("Reply Received")
 
 				if mq.currentMessage.Callback != nil {
+					mq.logger.WithFields(logrus.Fields{
+						"message":      msg.String(),
+						"message_type": msg.TargetString()}).Debug("Executing ReplyCallback")
+
 					mq.currentMessage.Callback <- msg
 				}
 				mq.currentMessage = nil
@@ -81,9 +112,10 @@ func (mq *MessageQueue) Start() {
 
 					mq.logger.WithFields(logrus.Fields{
 						"message":      mq.currentMessage.Message.String(),
-						"message_type": reflect.TypeOf(mq.currentMessage.Message.TargetMethod).String()}).Debug("Reply Received")
-					mq.actorChan <- mq.currentMessage.Message
+						"message_type": mq.currentMessage.Message.TargetString()}).Debug("Executing New Message")
+					mq.executorChan <- mq.currentMessage.Message
 				} else {
+					mq.logger.Debug("Message queue is empty")
 					if mq.dontAcceptNewMessages {
 						mq.doneChan <- true
 					}
@@ -132,9 +164,12 @@ func (mq *MessageQueue) SendAndForget(msg message.Message) {
 	}
 }
 
-// GetActorChan That's the reply channel
-func (mq *MessageQueue) GetActorChan() chan message.Message {
-	return mq.actorChan
+func (mq *MessageQueue) GetExecutorChan() chan message.Message {
+	return mq.executorChan
+}
+
+func (mq *MessageQueue) GetExecutorReplyChan() chan message.Message {
+	return mq.executorReplyChan
 }
 
 // Length

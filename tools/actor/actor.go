@@ -73,11 +73,11 @@ func (a *Actor) PrepareToStop() chan bool {
 
 // Reply
 func (a *Actor) Reply(msg message.Message) {
-	a.queue.GetActorChan() <- msg
+	a.queue.GetExecutorReplyChan() <- msg
 }
 
 func (a *Actor) NoReply(msg message.Message) {
-	a.queue.GetActorChan() <- msg
+	a.queue.GetExecutorReplyChan() <- msg
 }
 
 func (a *Actor) processMessage(msg message.Message, handler func(msg message.Message) bool) {
@@ -122,7 +122,7 @@ func (a *Actor) Start() {
 		done := false
 		for !done {
 			select {
-			case msg := <-a.queue.GetActorChan():
+			case msg := <-a.queue.GetExecutorChan():
 				a.logger.WithFields(logrus.Fields{
 					"message":      msg.String(),
 					"message_type": reflect.TypeOf(msg.TargetMethod).String()}).Debug("About to process message")

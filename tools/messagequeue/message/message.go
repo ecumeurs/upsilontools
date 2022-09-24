@@ -2,6 +2,7 @@ package message
 
 import (
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/google/uuid"
@@ -67,4 +68,25 @@ func (m Message) ReplyWithError(err string, errKey string) Message {
 // String
 func (m *Message) String() string {
 	return fmt.Sprintf("[R %s]", m.RequestId.String()[0:8])
+}
+
+func (m *Message) TargetString() string {
+	if m.TargetMethod == nil {
+		return "<nil>"
+	}
+	return reflect.TypeOf(m.TargetMethod).String()
+}
+
+func (m *Message) ContentString() string {
+	if m.TargetMethod == nil {
+		return "<nil>"
+	}
+	return reflect.TypeOf(m.Content).String()
+}
+
+func (m *Message) CallbackString() string {
+	if m.TargetMethod == nil {
+		return "<nil>"
+	}
+	return reflect.TypeOf(m.CallbackMethod).String()
 }
