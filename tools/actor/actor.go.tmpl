@@ -34,6 +34,8 @@ func New() *{STRUCT} {
 func (c *{STRUCT}) handleMessage(msg message.Message) bool {
 	switch msg.TargetMethod.(type) {
 	case {STRUCTMTHD}.XXX:
+		// HERE methods must reply with c.act.Reply()!
+		c.act.Reply(msg.Reply())
 		return true
 	}
 	return false
