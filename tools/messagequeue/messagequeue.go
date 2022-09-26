@@ -86,11 +86,13 @@ func (mq *MessageQueue) Start() {
 				mq.messages = append(mq.messages, msg)
 				if mq.currentMessage == nil {
 					mq.currentMessage = &msg
-					mq.logger.WithFields(logrus.Fields{
-						"message":      msg.Message.String(),
-						"message_type": msg.Message.TargetString()}).Debug("Executing message")
+					go func(msg message.Message) {
+						mq.logger.WithFields(logrus.Fields{
+							"message":      msg.String(),
+							"message_type": msg.TargetString()}).Debug("Executing message")
 
-					mq.executorChan <- msg.Message
+						mq.executorChan <- msg
+					}(msg.Message)
 				}
 			case msg := <-mq.executorReplyChan:
 				mq.logger.WithFields(logrus.Fields{
@@ -98,22 +100,26 @@ func (mq *MessageQueue) Start() {
 					"message_type": msg.TargetString()}).Debug("Reply Received")
 
 				if mq.currentMessage.Callback != nil {
-					mq.logger.WithFields(logrus.Fields{
-						"message":      msg.String(),
-						"message_type": msg.TargetString()}).Debug("Executing ReplyCallback")
 
-					mq.currentMessage.Callback <- msg
+					go func(repl message.Message, callback chan message.Message) {
+						mq.logger.WithFields(logrus.Fields{
+							"message":      msg.String(),
+							"message_type": msg.TargetString()}).Debug("Executing ReplyCallback")
+
+						callback <- repl
+					}(msg, mq.currentMessage.Callback)
 				}
 				mq.currentMessage = nil
 				mq.messages = mq.messages[1:]
 
 				if len(mq.messages) > 0 {
 					mq.currentMessage = &mq.messages[0]
-
-					mq.logger.WithFields(logrus.Fields{
-						"message":      mq.currentMessage.Message.String(),
-						"message_type": mq.currentMessage.Message.TargetString()}).Debug("Executing New Message")
-					mq.executorChan <- mq.currentMessage.Message
+					go func(msg message.Message) {
+						mq.logger.WithFields(logrus.Fields{
+							"message":      msg.String(),
+							"message_type": msg.TargetString()}).Debug("Executing New Message")
+						mq.executorChan <- msg
+					}(mq.currentMessage.Message)
 				} else {
 					mq.logger.Debug("Message queue is empty")
 					if mq.dontAcceptNewMessages {
