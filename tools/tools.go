@@ -4,6 +4,8 @@ import (
 	"math/rand"
 )
 
+var randInt = rand.Intn
+
 type IntRange struct {
 	Start int
 	End   int
@@ -13,15 +15,19 @@ func NewIntRange(start, end int) IntRange {
 	return IntRange{start, end}
 }
 
+func TesterRand(rdm func(int) int) {
+	randInt = rdm
+}
+
 func (r IntRange) Random() int {
 	if r.Start == r.End {
 		return r.Start
 	}
-	return r.Start + rand.Intn(r.End-r.Start)
+	return r.Start + randInt(r.End-r.Start)
 }
 
 func RandomInt(min, max int) int {
-	return min + rand.Intn(max-min)
+	return min + randInt(max-min)
 }
 
 func Abs(x int) int {
