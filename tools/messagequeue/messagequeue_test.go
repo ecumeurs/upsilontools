@@ -27,7 +27,7 @@ func TestSendOneSimpleMessageQueue(t *testing.T) {
 		mq.GetExecutorReplyChan() <- reply
 	}()
 
-	cb := make(chan message.Message) // callback
+	cb := make(chan *message.Message) // callback
 	defer close(cb)
 	mq.Send(message.Create(nil, "test", "test"), cb)
 
@@ -59,7 +59,7 @@ func TestSendMultipleSimpleMessageQueue(t *testing.T) {
 		}
 	}()
 
-	cb := make(chan message.Message) // callback
+	cb := make(chan *message.Message) // callback
 	defer close(cb)
 
 	go func() {
@@ -111,7 +111,7 @@ func TestSendHundredsSimpleMessageQueue(t *testing.T) {
 		end <- true
 	}()
 
-	cb := make(chan message.Message) // callback
+	cb := make(chan *message.Message) // callback
 	defer close(cb)
 
 	go func() {

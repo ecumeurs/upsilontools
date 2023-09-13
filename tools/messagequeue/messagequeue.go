@@ -9,15 +9,15 @@ import (
 )
 
 type internalMessage struct {
-	Message  message.Message
-	Callback chan message.Message
+	Message  *message.Message
+	Callback chan *message.Message
 }
 
 type MessageQueue struct {
 	Name                  string
 	inputChan             chan internalMessage
-	executorReplyChan     chan message.Message
-	executorChan          chan message.Message
+	executorReplyChan     chan *message.Message
+	executorChan          chan *message.Message
 	stopChan              chan bool
 	doneChan              chan bool // filled when the queue is empty
 	dontAcceptNewMessages bool
@@ -33,8 +33,8 @@ func New(name string) *MessageQueue {
 	mq := &MessageQueue{
 		Name:                  name,
 		inputChan:             make(chan internalMessage),
-		executorReplyChan:     make(chan message.Message),
-		executorChan:          make(chan message.Message),
+		executorReplyChan:     make(chan *message.Message),
+		executorChan:          make(chan *message.Message),
 		stopChan:              make(chan bool),
 		doneChan:              make(chan bool),
 		dontAcceptNewMessages: false,
@@ -86,7 +86,7 @@ func (mq *MessageQueue) Start() {
 				mq.messages = append(mq.messages, msg)
 				if mq.currentMessage == nil {
 					mq.currentMessage = &msg
-					go func(msg message.Message) {
+					go func(msg *message.Message) {
 						mq.logger.WithFields(logrus.Fields{
 							"message":      msg.String(),
 							"message_type": msg.TargetString()}).Debug("Executing message")
@@ -101,7 +101,7 @@ func (mq *MessageQueue) Start() {
 
 				if mq.currentMessage.Callback != nil {
 
-					go func(repl message.Message, callback chan message.Message) {
+					go func(repl *message.Message, callback chan *message.Message) {
 						mq.logger.WithFields(logrus.Fields{
 							"message":      msg.String(),
 							"message_type": msg.TargetString()}).Debug("Executing ReplyCallback")
@@ -114,7 +114,7 @@ func (mq *MessageQueue) Start() {
 
 				if len(mq.messages) > 0 {
 					mq.currentMessage = &mq.messages[0]
-					go func(msg message.Message) {
+					go func(msg *message.Message) {
 						mq.logger.WithFields(logrus.Fields{
 							"message":      msg.String(),
 							"message_type": msg.TargetString()}).Debug("Executing New Message")
@@ -146,35 +146,41 @@ func (mq *MessageQueue) PrepareStop() chan bool {
 		go func() {
 			mq.doneChan <- true
 		}()
+	} else {
+		mq.logger.WithField("length", mq.Length()).Debug("Message queue is not empty, waiting for it to be empty")
 	}
 	return mq.doneChan
 }
 
 // Send a message to the message queue
-func (mq *MessageQueue) Send(msg message.Message, callback chan message.Message) {
+func (mq *MessageQueue) Send(msg *message.Message, callback chan *message.Message) {
 	if !mq.dontAcceptNewMessages {
 		mq.inputChan <- internalMessage{
 			Message:  msg,
 			Callback: callback,
 		}
+	} else {
+		mq.logger.WithField("message", msg.String()).Debug("Message queue is stopping, ignoring message")
 	}
 }
 
 // Send a message to the message queue and forget (wont reply)
-func (mq *MessageQueue) SendAndForget(msg message.Message) {
+func (mq *MessageQueue) SendAndForget(msg *message.Message) {
 	if !mq.dontAcceptNewMessages {
 		mq.inputChan <- internalMessage{
 			Message:  msg,
 			Callback: nil,
 		}
+	} else {
+		mq.logger.WithField("message", msg.String()).Debug("Message queue is stopping, ignoring message")
 	}
 }
 
-func (mq *MessageQueue) GetExecutorChan() chan message.Message {
+func (mq *MessageQueue) GetExecutorChan() chan *message.Message {
 	return mq.executorChan
 }
 
-func (mq *MessageQueue) GetExecutorReplyChan() chan message.Message {
+func (mq *MessageQueue) GetExecutorReplyChan() chan *message.Message {
 	return mq.executorReplyChan
 }
 

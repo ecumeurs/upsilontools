@@ -23,21 +23,26 @@ type Message struct {
 	TargetMethod   interface{}
 	CallbackMethod interface{}
 
-	EmitedAt     time.Time
-	HasError     bool
-	ErrorMessage string
-	ErrorKey     string
+	EmitedAt          time.Time
+	HasError          bool
+	ErrorMessage      string
+	ErrorKey          string
+	HasBeenReplied    bool
+	ShouldBeRepliedTo bool
 }
 
 // New
-func New() Message {
-	return Message{
-		RequestId: uuid.New(),
-		EmitedAt:  time.Now(),
+func New() *Message {
+	return &Message{
+		RequestId:         uuid.New(),
+		EmitedAt:          time.Now(),
+		HasBeenReplied:    false,
+		ShouldBeRepliedTo: true,
+		HasError:          false,
 	}
 }
 
-func Create(Content, TargetMethod, CallbackMethod interface{}) Message {
+func Create(Content, TargetMethod, CallbackMethod interface{}) *Message {
 	msg := New()
 	msg.Content = Content
 	msg.TargetMethod = TargetMethod
@@ -47,17 +52,19 @@ func Create(Content, TargetMethod, CallbackMethod interface{}) Message {
 }
 
 // NewReply
-func (request *Message) Reply() Message {
-	return Message{
-		RequestId:      request.RequestId,
-		EmitedAt:       time.Now(),
-		TargetMethod:   request.CallbackMethod,
-		CallbackMethod: request.TargetMethod,
+func (request *Message) Reply() *Message {
+	return &Message{
+		RequestId:         request.RequestId,
+		EmitedAt:          time.Now(),
+		TargetMethod:      request.CallbackMethod,
+		CallbackMethod:    request.TargetMethod,
+		ShouldBeRepliedTo: false,
+		HasBeenReplied:    false,
 	}
 }
 
 // ReplyWithError
-func (m Message) ReplyWithError(err string, errKey string) Message {
+func (m Message) ReplyWithError(err string, errKey string) *Message {
 	res := m.Reply()
 	res.HasError = true
 	res.ErrorMessage = err
