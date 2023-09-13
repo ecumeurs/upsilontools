@@ -53,7 +53,7 @@ func (a *TestActor) testActorRequestError(msg *message.Message) bool {
 }
 
 func (a *TestActor) testActorReplier(msg *message.Message) bool {
-	a.logger.Info("testActorReplier Received message: ", msg.String())
+	a.Logger.Info("testActorReplier Received message: ", msg.String())
 	a.Reply(msg, msg.Reply())
 	return true
 }
@@ -73,7 +73,7 @@ func TestActorSendMessage(t *testing.T) {
 	req := message.New()
 	req.TargetMethod = TestActorRequest{}
 
-	testActor.Send(req, resChan)
+	testActor.SendActor(req, resChan)
 
 	<-resChan
 
@@ -89,8 +89,8 @@ func TestActorToActorMessaging(t *testing.T) {
 	testActor2.Start()
 
 	testActor.AddMethod(TestActorReplyRequest{}, func(msg *message.Message) (handled bool) {
-		testActor.logger.Info("testActor received message: TestActorReplyRequest")
-		testActor2.Send(message.Create(nil, TestActorReplyRequest{}, TestActorReply{}), testActor.GetCallbackChan())
+		testActor.Logger.Info("testActor received message: TestActorReplyRequest")
+		testActor2.SendActor(message.Create(nil, TestActorReplyRequest{}, TestActorReply{}), testActor.GetCallbackChan())
 		testActor.Reply(msg, msg.Reply())
 		return true
 	}, nil)
@@ -99,7 +99,7 @@ func TestActorToActorMessaging(t *testing.T) {
 	defer close(replyChan)
 
 	testActor.AddReply(TestActorReply{}, func(msg *message.Message) (handled bool) {
-		testActor.logger.Info("testActor received reply: TestActorReply")
+		testActor.Logger.Info("testActor received reply: TestActorReply")
 		replyChan <- msg
 		// replies don't necessitate a Reply()/NoReply() call
 		return true
@@ -110,7 +110,7 @@ func TestActorToActorMessaging(t *testing.T) {
 	req := message.New()
 	req.TargetMethod = TestActorReplyRequest{}
 
-	testActor.Send(req, resChan)
+	testActor.SendActor(req, resChan)
 
 	logrus.Info("Waiting for request to be received")
 	<-resChan
@@ -131,20 +131,20 @@ func TestBlockingActorToActorMessaging(t *testing.T) {
 	testActor2.Start()
 
 	testActor.AddMethod(TestActorReplyRequest{}, func(msg *message.Message) (handled bool) {
-		testActor.logger.Info("testActor received message: TestActorReplyRequest")
+		testActor.Logger.Info("testActor received message: TestActorReplyRequest")
 
 		localReplyChan := make(chan *message.Message)
 		defer close(localReplyChan)
 
-		testActor2.Send(message.Create(nil, TestActorReplyRequest{}, TestActorReply{}), localReplyChan)
+		testActor2.SendActor(message.Create(nil, TestActorReplyRequest{}, TestActorReply{}), localReplyChan)
 
-		testActor.logger.Info("Waiting for reply")
+		testActor.Logger.Info("Waiting for reply")
 		<-localReplyChan
 
 		// won't proc a Reply slot in the actor as the reply is handled by the callback `localReplyChan`
 		// this method allows for a multistep action to occurs in a single method, but is blocking the whole actor during this step
 		// (the actor will still accepts new message as it's handled by the queue thread)
-		testActor.logger.Info("Reply received")
+		testActor.Logger.Info("Reply received")
 
 		testActor.Reply(msg, msg.Reply())
 		return true
@@ -155,7 +155,7 @@ func TestBlockingActorToActorMessaging(t *testing.T) {
 	req := message.New()
 	req.TargetMethod = TestActorReplyRequest{}
 
-	testActor.Send(req, resChan)
+	testActor.SendActor(req, resChan)
 
 	logrus.Info("Waiting for reply to be received")
 	<-resChan

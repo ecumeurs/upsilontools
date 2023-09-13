@@ -72,13 +72,18 @@ type ActorError struct {
 }
 
 type Actor struct {
-	actorName    string
-	queue        messagequeue.MessageQueue
-	CallbackChan chan *message.Message
-	stopper      chan bool
-	logger       *logrus.Entry
-	methods      map[reflect.Type]ActorMethod
-	replies      map[reflect.Type]ActorMethod
+	actorName     string
+	queue         messagequeue.MessageQueue
+	CallbackChan  chan *message.Message
+	stopper       chan bool
+	Logger        *logrus.Entry
+	RequestLogger *logrus.Entry
+	methods       map[reflect.Type]ActorMethod
+	replies       map[reflect.Type]ActorMethod
+
+	// NOTE: dedicated triggers, should be mostly unused or to provide more information in logs.
+	NewMessageReceived func(act *Actor, msg *message.Message)
+	NewReplyReceived   func(act *Actor, msg *message.Message)
 }
 
 // New
@@ -92,7 +97,7 @@ func New(name string) *Actor {
 		replies:      make(map[reflect.Type]ActorMethod),
 	}
 
-	act.logger = logrus.WithFields(logrus.Fields{
+	act.Logger = logrus.WithFields(logrus.Fields{
 		"component": "actor",
 		"name":      act.actorName,
 	})
@@ -101,12 +106,12 @@ func New(name string) *Actor {
 
 // Add Method to the actor
 func (a *Actor) AddMethod(method interface{}, handler func(msg *message.Message) (handled bool), validator func(msg *message.Message) (errors []error)) {
-	a.logger.WithFields(logrus.Fields{
+	a.Logger.WithFields(logrus.Fields{
 		"method": method,
 	}).Debug("Adding method")
 	t := reflect.TypeOf(method)
 	if _, ok := a.methods[t]; ok {
-		a.logger.WithFields(logrus.Fields{
+		a.Logger.WithFields(logrus.Fields{
 			"method": method,
 		}).Warn("Method already registered")
 		return
@@ -120,11 +125,11 @@ func (a *Actor) AddMethod(method interface{}, handler func(msg *message.Message)
 
 // Add Method to the actor
 func (a *Actor) AddActorMethod(mt ActorMethod) {
-	a.logger.WithFields(logrus.Fields{
+	a.Logger.WithFields(logrus.Fields{
 		"method": mt.MethodType(),
 	}).Debug("Adding method")
 	if _, ok := a.methods[mt.MethodType()]; ok {
-		a.logger.WithFields(logrus.Fields{
+		a.Logger.WithFields(logrus.Fields{
 			"method": mt.MethodType(),
 		}).Warn("Method already registered")
 		return
@@ -134,12 +139,12 @@ func (a *Actor) AddActorMethod(mt ActorMethod) {
 
 // Add Reply handler to the actor
 func (a *Actor) AddReply(method interface{}, handler func(msg *message.Message) (handled bool), validator func(msg *message.Message) (errors []error)) {
-	a.logger.WithFields(logrus.Fields{
+	a.Logger.WithFields(logrus.Fields{
 		"reply": method,
 	}).Debug("Adding Reply")
 	t := reflect.TypeOf(method)
 	if _, ok := a.methods[t]; ok {
-		a.logger.WithFields(logrus.Fields{
+		a.Logger.WithFields(logrus.Fields{
 			"reply": method,
 		}).Warn("Reply already registered")
 		return
@@ -153,11 +158,11 @@ func (a *Actor) AddReply(method interface{}, handler func(msg *message.Message) 
 
 // Add Reply handler to the actor
 func (a *Actor) AddActorReply(mt ActorMethod) {
-	a.logger.WithFields(logrus.Fields{
+	a.Logger.WithFields(logrus.Fields{
 		"reply": mt.MethodType(),
 	}).Debug("Adding reply")
 	if _, ok := a.methods[mt.MethodType()]; ok {
-		a.logger.WithFields(logrus.Fields{
+		a.Logger.WithFields(logrus.Fields{
 			"reply": mt.MethodType(),
 		}).Warn("Reply already registered")
 		return
@@ -181,11 +186,11 @@ func (a *Actor) PrepareToStop() chan bool {
 // Reply
 func (a *Actor) Reply(origin *message.Message, msg *message.Message) {
 	if origin == nil {
-		a.logger.Warn("Reply called with nil origin -- Totally unexpected")
+		a.Logger.Warn("Reply called with nil origin -- Totally unexpected")
 		return
 	} else {
 		if !origin.ShouldBeRepliedTo {
-			a.logger.WithFields(logrus.Fields{
+			a.Logger.WithFields(logrus.Fields{
 				"message":      origin.String(),
 				"message_type": reflect.TypeOf(origin.TargetMethod).String()}).Warn("Reply called on a message that should not be replied to")
 			return
@@ -197,11 +202,11 @@ func (a *Actor) Reply(origin *message.Message, msg *message.Message) {
 
 func (a *Actor) NoReply(origin *message.Message) {
 	if origin == nil {
-		a.logger.Warn("Reply called with nil origin -- Totally unexpected")
+		a.Logger.Warn("Reply called with nil origin -- Totally unexpected")
 		return
 	}
 	if !origin.ShouldBeRepliedTo {
-		a.logger.WithFields(logrus.Fields{
+		a.Logger.WithFields(logrus.Fields{
 			"message":      origin.String(),
 			"message_type": reflect.TypeOf(origin.TargetMethod).String()}).Warn("Reply called on a message that should not be replied to")
 	} else {
@@ -211,29 +216,38 @@ func (a *Actor) NoReply(origin *message.Message) {
 }
 
 func (a *Actor) processReply(msg *message.Message) {
+	a.RequestLogger = a.Logger.WithFields(logrus.Fields{
+		"request_type": "reply",
+		"message":      msg.String(),
+		"message_type": reflect.TypeOf(msg.TargetMethod).String(),
+	})
+	if a.NewReplyReceived != nil {
+		a.NewReplyReceived(a, msg)
+	}
+
 	typ := reflect.TypeOf(msg.TargetMethod)
 	// special case ActorStop
 	if typ == reflect.TypeOf(ActorStop{}) {
-		a.logger.WithFields(logrus.Fields{
-			"message":      msg.String(),
-			"message_type": reflect.TypeOf(msg.TargetMethod).String()}).Debug("ActorStop received")
+		a.RequestLogger.Debug("ActorStop received")
 		msg.TargetMethod = ActorAboutToStop{}
 		typ = reflect.TypeOf(msg.TargetMethod)
 		defer a.Stop()
 	}
 
+	if msg.HasError {
+		a.RequestLogger.WithFields(logrus.Fields{
+			"error": msg.ErrorMessage,
+		}).Error("Error received")
+	}
+
 	v, found := a.replies[typ]
 	if !found {
-		a.logger.WithFields(logrus.Fields{
-			"message":      msg.String(),
-			"message_type": reflect.TypeOf(msg.TargetMethod).String()}).Warn("Unexpected reply")
+		a.RequestLogger.Warn("Unexpected reply")
 		return
 	}
 
 	if v.Validator(msg) != nil {
-		a.logger.WithFields(logrus.Fields{
-			"message":      msg.String(),
-			"message_type": reflect.TypeOf(msg.TargetMethod).String()}).Warn("Reply validation failed")
+		a.RequestLogger.Warn("Reply validation failed")
 		rpl := msg.ReplyWithError("Reply validation failed", "actor.reply.validation")
 		a.Reply(msg, rpl)
 		return
@@ -242,9 +256,7 @@ func (a *Actor) processReply(msg *message.Message) {
 	if v.Handler(msg) {
 		return
 	} else {
-		a.logger.WithFields(logrus.Fields{
-			"message":      msg.String(),
-			"message_type": reflect.TypeOf(msg.TargetMethod).String()}).Warn("Unhandled reply")
+		a.RequestLogger.Warn("Unhandled reply")
 		// auto reply ... bad ?
 		a.Reply(msg, msg.Reply())
 		return
@@ -252,31 +264,40 @@ func (a *Actor) processReply(msg *message.Message) {
 }
 
 func (a *Actor) processMessage(msg *message.Message) {
+	a.RequestLogger = a.Logger.WithFields(logrus.Fields{
+		"request_type": "message",
+		"message":      msg.String(),
+		"message_type": reflect.TypeOf(msg.TargetMethod).String(),
+	})
+
+	if a.NewMessageReceived != nil {
+		a.NewMessageReceived(a, msg)
+	}
 	typ := reflect.TypeOf(msg.TargetMethod)
 	// special case ActorStop
 	if typ == reflect.TypeOf(ActorStop{}) {
-		a.logger.WithFields(logrus.Fields{
-			"message":      msg.String(),
-			"message_type": reflect.TypeOf(msg.TargetMethod).String()}).Debug("ActorStop received")
+		a.RequestLogger.Debug("ActorStop received")
 		msg.TargetMethod = ActorAboutToStop{}
 		typ = reflect.TypeOf(msg.TargetMethod)
 		defer a.Stop()
 	}
 
+	if msg.HasError {
+		a.RequestLogger.WithFields(logrus.Fields{
+			"error": msg.ErrorMessage,
+		}).Error("Error received")
+	}
+
 	v, found := a.methods[typ]
 	if !found {
-		a.logger.WithFields(logrus.Fields{
-			"message":      msg.String(),
-			"message_type": reflect.TypeOf(msg.TargetMethod).String()}).Warn("Unexpected message")
+		a.RequestLogger.Warn("Unexpected message")
 		// auto reply ... bad ?
 		a.Reply(msg, msg.Reply())
 		return
 	}
 
 	if v.Validator(msg) != nil {
-		a.logger.WithFields(logrus.Fields{
-			"message":      msg.String(),
-			"message_type": reflect.TypeOf(msg.TargetMethod).String()}).Warn("Reply validation failed")
+		a.RequestLogger.Warn("Reply validation failed")
 		rpl := msg.ReplyWithError("Reply validation failed", "actor.reply.validation")
 		a.Reply(msg, rpl)
 		return
@@ -286,9 +307,7 @@ func (a *Actor) processMessage(msg *message.Message) {
 		if msg.ShouldBeRepliedTo {
 			// Add a delayed reply option ( message should be replied to, but hasn't yet. all while allowing other messages to be processed.)
 			if !msg.HasBeenReplied {
-				a.logger.WithFields(logrus.Fields{
-					"message":      msg.String(),
-					"message_type": reflect.TypeOf(msg.TargetMethod).String()}).Error("Message should be replied to but has not been")
+				a.RequestLogger.Error("Message should be replied to but has not been")
 				rpl := msg.ReplyWithError("Message should be replied to but has not been", "actor.reply.missing")
 				a.Reply(msg, rpl)
 			}
@@ -296,9 +315,7 @@ func (a *Actor) processMessage(msg *message.Message) {
 
 		return
 	} else {
-		a.logger.WithFields(logrus.Fields{
-			"message":      msg.String(),
-			"message_type": reflect.TypeOf(msg.TargetMethod).String()}).Warn("Unhandled message")
+		a.RequestLogger.Warn("Unhandled message")
 		// auto reply ... bad ?
 		a.Reply(msg, msg.Reply())
 		return
@@ -309,17 +326,17 @@ func (a *Actor) processMessage(msg *message.Message) {
 func (a *Actor) Start() {
 	a.queue.Start()
 	go func() {
-		a.logger.Info("Actor started")
+		a.Logger.Info("Actor started")
 		done := false
 		for !done {
 			select {
 			case msg := <-a.queue.GetExecutorChan():
-				a.logger.WithFields(logrus.Fields{
+				a.Logger.WithFields(logrus.Fields{
 					"message":      msg.String(),
 					"message_type": reflect.TypeOf(msg.TargetMethod).String()}).Debug("About to process message")
 				a.processMessage(msg)
 			case msg := <-a.CallbackChan:
-				a.logger.WithFields(logrus.Fields{
+				a.Logger.WithFields(logrus.Fields{
 					"message":      msg.String(),
 					"message_type": reflect.TypeOf(msg.TargetMethod).String()}).Debug("About to process reply")
 				a.processReply(msg)
@@ -327,9 +344,9 @@ func (a *Actor) Start() {
 				done = true
 			}
 		}
-		a.logger.Info("Actor Stopped")
+		a.Logger.Info("Actor Stopped")
 	}()
-	a.Notify(message.Create(nil, ActorStarted{}, nil))
+	a.NotifyActor(message.Create(nil, ActorStarted{}, nil))
 }
 
 // String
@@ -341,18 +358,18 @@ func (a *Actor) GetQueue() *messagequeue.MessageQueue {
 	return &a.queue
 }
 
-// SendMessage
-func (a *Actor) Send(msg *message.Message, res chan *message.Message) {
-	a.logger.WithFields(logrus.Fields{
+func (a *Actor) SendActor(msg *message.Message, res chan *message.Message) {
+	a.Logger.WithFields(logrus.Fields{
 		"message":      msg.String(),
 		"message_type": reflect.TypeOf(msg.TargetMethod).String()}).Debug("Sending message")
 	a.queue.Send(msg, res)
 }
 
-func (a *Actor) Notify(msg *message.Message) {
-	a.logger.WithFields(logrus.Fields{
+func (a *Actor) NotifyActor(msg *message.Message) {
+	a.Logger.WithFields(logrus.Fields{
 		"message":      msg.String(),
 		"message_type": reflect.TypeOf(msg.TargetMethod).String()}).Debug("Notifying message")
+	msg.ShouldBeRepliedTo = false
 	a.queue.Send(msg, nil)
 }
 

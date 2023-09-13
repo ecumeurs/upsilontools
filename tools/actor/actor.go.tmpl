@@ -3,7 +3,6 @@ package {PKG}
 // USAGE: 
 // replace {PKG} with the package name
 // replace {STRUCT} with the main actor struct name.
-// replace {STRUCTMTHD} with the main actor struct method package name.
 
 
 import (
@@ -15,46 +14,18 @@ import (
 )
 
 type {STRUCT} struct {
-	act            *actor.Actor
+	*actor.Actor
 }
 
 // New
 func New() *{STRUCT} {
 	ctrl := &{STRUCT}{
+		Actor: actor.New("{STRUCT}"),
 	}
 
-	ctrl.act = actor.New(fmt.Sprintf("{STRUCT}"))
-	ctrl.act.SetReceiveMessageHandler(ctrl.handleMessage)
-	ctrl.act.SetReplyMessageHandler(ctrl.handleReply)
-	ctrl.act.Start()
+	// ctrl.act.AddMethod(<method struct>, <method handler>, <method validator>)
+	// ctrl.act.AddReply(<reply struct>, <reply handler>, <reply validator>)
+	ctrl.Start()
 
 	return ctrl
-}
-
-func (c *{STRUCT}) handleMessage(msg message.Message) bool {
-	switch msg.TargetMethod.(type) {
-	case {STRUCTMTHD}.XXX:
-		// HERE methods must reply with c.act.Reply()!
-		c.act.Reply(msg.Reply())
-		return true
-	}
-	return false
-}
-
-func (c *{STRUCT}) handleReply(msg message.Message) bool {
-	switch msg.TargetMethod.(type) {
-	case {STRUCTMTHD}.XXX:
-		return true
-	}
-	return false
-}
-
-// Implement the actor.Communication interface
-// Notify Actor
-func (c *{STRUCT}) NotifyActor(msg message.Message) {
-	c.act.Notify(msg)
-}
-
-func (c *{STRUCT}) SendActor(msg message.Message, callback chan message.Message) {
-	c.act.Send(msg, callback)
 }
