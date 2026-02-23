@@ -1,94 +1,236 @@
-# .\tools\actor
+# tools/actor/
 
 [Up](../README.md)
 
-# Actor
+## Overview
 
-An actor is a stand alone thread that can only be accessed by using the corresponding Message Queue. 
+An **Actor** is a self-contained goroutine that owns its data exclusively. All access to that data must go through the actor's message queue. Because only one goroutine ever reads or writes the actor's internal state, no mutexes are needed.
 
-The actor will expose it's available actions through it and will only respond through it as well.
+This is an implementation of the [Actor Model](https://en.wikipedia.org/wiki/Actor_model) tailored for Go channel idioms.
 
-This ensure data integrity and thread safety.
+---
 
-# Pro & Con & Tips
+## Architecture
 
-* Actors protect data integrity and thread safety.
-* Go dislike cyclic dependencies, so you should avoid them.
-  * Make sure that the struct used to discriminate your TargetMethod is declared outside of the actor's package.
-* If you need to access to another Actor you should use the actor.Communication interface.
+```
+                    ┌──────────────────────────────┐
+  NotifyActor() ──> │         MessageQueue          │
+  SendActor()   ──> │  inputChan  ──> []messages    │
+                    │                   │           │
+                    │           executorChan         │
+                    └───────────────────┼───────────┘
+                                        │
+                    ┌───────────────────▼───────────┐
+                    │         Actor goroutine        │
+                    │   select {                     │
+                    │     case msg <- executorChan:  │
+                    │       processMessage(msg)      │
+                    │     case msg <- CallbackChan:  │
+                    │       processReply(msg)        │
+                    │     case <- stopper:           │
+                    │       done = true              │
+                    │   }                            │
+                    └────────────────────────────────┘
+```
 
+**Key invariant**: the actor goroutine is the only reader/writer of the actor's internal fields.
 
-# Usage
+---
 
-Declare a new struct and compound the Actor struct and set the receiveMessageHandler and replyMessageHandler appropriately.
+## Public Interface
 
-Implement the actor.Communication interface: allows other entities (Actor or not) to communicate with the actor. This also allow to break cyclic dependencies.
+### Types
 
+| Type | Purpose |
+|---|---|
+| `Actor` | Core struct. Embed or compose in your own type. |
+| `Communication` | Interface: `NotifyActor` + `SendActor`. Expose this to callers to break cyclic imports. |
+| `Manageable` | Interface: `Communication` + `Start` / `Stop` / `PrepareToStop`. |
+| `ActorMethod` | Interface for registering typed handlers. |
+| `NoReply` | Embed in method structs that never expect a reply from the actor (documentary only). |
 
+### Lifecycle
 
 ```go
+// Create
+act := actor.New("MyActor")
+
+// Register handlers BEFORE Start()
+act.AddMethod(MyRequest{}, myHandler, myValidator)
+act.AddReply(MyReply{}, myReplyHandler, nil)
+
+// Start the goroutine
+act.Start()
+
+// Stop (immediate, may drop queued messages)
+act.Stop()
+
+// Graceful stop: drain queue, then stop
+done := act.PrepareToStop()
+<-done
+act.Stop()
+```
+
+### Sending Messages
+
+| Method | Blocks? | Reply expected? | Use when |
+|---|---|---|---|
+| `NotifyActor(msg)` | No | No (`ShouldBeRepliedTo = false`) | Fire-and-forget events |
+| `SendActor(msg, chan)` | No (caller polls chan) | Yes | RPC-style calls |
+
+### Replying from a Handler
+
+Every handler that receives a message via `SendActor` **must** terminate with exactly one of:
+
+```go
+a.Reply(msg, replyMsg)   // send a reply payload
+a.NoReply(msg)           // acknowledge without payload
+```
+
+Failure to call either causes the caller's reply channel to block forever.
+
+---
+
+## Defining an Actor
+
+```go
+// 1. Declare method structs in a separate package to avoid cyclic deps.
+// e.g. package mymethods
+type DoWork struct { Param string }
+type DoWorkReply struct { Result int }
+
+// 2. Declare your actor
 type MyActor struct {
-    act actor.Actor
+    *actor.Actor
+    // your private state here — safe, only this goroutine touches it
+    counter int
 }
 
-type MyMethod struct {}
-
-func New() *MyActor{
-    a := &MyActor{}
-    a.act = actor.New("MyActor") // sets a name for logging purposes
-    a.SetReceiveMessageHandler(a.ReceiveMessage)
-    a.SetReplyMessageHandler(a.MessageReplied)
-    a.Start() // dont forget to start! 
+func New() *MyActor {
+    a := &MyActor{
+        Actor: actor.New("MyActor"),
+    }
+    a.AddMethod(mymethods.DoWork{}, a.doWork, a.validateDoWork)
+    a.Start()
     return a
 }
 
+// 3. Implement the Communication interface for external callers
+func (a *MyActor) NotifyActor(msg *message.Message) { a.Actor.NotifyActor(msg) }
+func (a *MyActor) SendActor(msg *message.Message, cb chan *message.Message) { a.Actor.SendActor(msg, cb) }
 
-//implement actor.Communication
-func (a *MyActor) NotifyActor(msg message.Message) {
-    a.act.Notify(msg)
+// 4. Implement handlers
+func (a *MyActor) doWork(msg *message.Message) bool {
+    req := msg.Content.(mymethods.DoWork)
+    a.counter++
+    reply := msg.Reply()
+    reply.Content = mymethods.DoWorkReply{Result: a.counter}
+    a.Reply(msg, reply)
+    return true
 }
 
-func (a *Actor) SendActor(msg message.Message, callback chan message.Message) {
-    a.act.Send(msg, callback)
-}
-
-
-
-func (a *MyMethod) ReceiveMessage(msg message.Message) bool {
-    select msg.TargetMethod.(type) {
-        case MyMethod:
-            a.MyMethod(msg)
-            return true // this message has been handled (error or not)
-    }
-    return false // this will ensure that unhandled messages are correctly defered.
-}
-
-func (a *MyMethod) MessageReplied(msg message.Message) bool{
-    select msg.TargetMethod.(type) {
-    }
-    return false
-}
-
-func (a *MyMethod) MyMethod(msg message.Message) {
-    // Do something
-    a.Reply(msg.Reply()) 
-    // always finish with either a.Reply() or a.NoReply() 
-    // either are needed to free the MessageQueue loop.
-    // don't forget to call on msg.Reply() to get the reply message, eventually fill it with further information in Content.
+func (a *MyActor) validateDoWork(msg *message.Message) []error {
+    // return nil for no errors
+    return nil
 }
 ```
 
-Then you can create a new instance of your actor and send it a message.
+### Calling an Actor
 
 ```go
-act := MyActor.New()
-req := message.Create(nil /*Content*/, MyActor.MyMethod /*TargetMethod*/, nil /*Callback Struct*/)
+act := New()
 
-resChan := make(chan message.Message)
+// Fire-and-forget
+act.NotifyActor(message.Create(nil, mymethods.DoWork{Param: "x"}, nil))
+
+// With reply (blocking pattern — safe from outside an actor)
+resChan := make(chan *message.Message)
 defer close(resChan)
-act.SendActor(req, resChan)
-
-<-resChan
+act.SendActor(message.Create(nil, mymethods.DoWork{Param: "x"}, nil), resChan)
+result := <-resChan
 ```
 
-Also you may want to keep your method structures in a separate file to avoid cyclic dependencies and only forward the Actor's queue to foreign actors and elements.
+---
+
+## Actor-to-Actor Communication
+
+When one actor needs to call another, **do not block on the reply from inside a handler**. The actor goroutine must remain free to process replies on `CallbackChan`.
+
+### ✅ Correct: Async via `CallbackChan`
+
+```go
+// Inside Actor A's handler:
+func (a *ActorA) handleRequest(msg *message.Message) bool {
+    outMsg := message.Create(nil, othermethods.DoThing{}, MyReply{})
+    // Send to Actor B; when B replies, it will arrive on A's CallbackChan
+    actorB.SendActor(outMsg, a.GetCallbackChan())
+    // Reply to our caller immediately (or defer — your choice)
+    a.Reply(msg, msg.Reply())
+    return true
+}
+
+// Actor A must have a reply handler registered for MyReply{}
+a.AddReply(MyReply{}, a.handleMyReply, nil)
+```
+
+### ⚠️ Risky: Blocking inside a handler (deadlock risk)
+
+```go
+// Inside Actor A's handler:
+func (a *ActorA) handleRequest(msg *message.Message) bool {
+    localChan := make(chan *message.Message)
+    defer close(localChan)
+    actorB.SendActor(outMsg, localChan)
+    <-localChan  // ⚠️ BLOCKS the executor goroutine
+    // ...
+    a.Reply(msg, msg.Reply())
+    return true
+}
+```
+
+This pattern is **only safe** if Actor B **never** calls back into Actor A to complete its work. If any chain leads A → B → ... → A, it will deadlock. The queue goroutine will still accept new messages, but the executor goroutine cannot process them.
+
+See issue [`20260223_actor_deadlock_risk.md`](../../../../issues/20260223_actor_deadlock_risk.md).
+
+---
+
+## Special Messages
+
+| Type | Direction | Meaning |
+|---|---|---|
+| `ActorStarted` | Internal notify on `Start()` | Actor is live; good place for init logic |
+| `ActorStop` | Trigger `Stop()` via message | Graceful stop from message handler context |
+| `ActorAboutToStop` | Internal, converted from `ActorStop` | Hook to run cleanup before goroutine exits |
+| `ActorError` | Application-defined | Carry error payloads in replies |
+
+---
+
+## Caveats & Pitfalls
+
+### 1. Deadlock: blocking actor-to-actor call
+**Risk: Medium.** If a handler blocks waiting on a reply from another actor that itself needs to call back into this actor, both goroutines deadlock. Use `CallbackChan` (async reply) instead. See the linked issue.
+
+### 2. Data race on `mq.messages` slice
+**Risk: Low-Medium.** The internal `[]internalMessage` slice and `dontAcceptNewMessages` bool in `MessageQueue` are accessed from two goroutines: the queue loop and the caller of `PrepareToStop()` → `Length()`. This is a technically correct data race per Go's memory model, even if it rarely manifests visibly. Add a mutex or restructure if this becomes a concern under the race detector.
+
+### 3. Reflection-based dispatch is fragile
+**Risk: Low.** Method handlers are keyed by `reflect.TypeOf(method)`. The type must match exactly (value vs. pointer, full package path). Renames, moves, or accidental shadowing will silently fail at runtime with an "Unexpected message" warning rather than a compile error.
+
+### 4. `NoReply` on a `Send` path hangs the caller
+**Risk: Medium.** If a handler calls `a.NoReply(msg)` on a message that arrived via `SendActor`, the caller's reply channel will block forever. The flag `msg.ShouldBeRepliedTo` is checked at runtime, but there is no compile-time enforcement. Always trace the call site.
+
+### 5. Method not registered → silent auto-reply
+**Risk: Low.** If a message arrives with an unregistered type, `processMessage` logs a warning and auto-replies with an empty message. This can mask bugs. Validators should be provided for all methods.
+
+### 6. `Stop()` is not graceful by default
+`a.Stop()` sends to `stopChan` which terminates the queue loop immediately, potentially dropping queued messages. Use `PrepareToStop()` + wait + `Stop()` for graceful shutdown.
+
+---
+
+## Tips
+
+- Keep your method structs **outside** the actor's package. This prevents cyclic imports when two actors need to reference each other's method types.
+- Expose only `actor.Communication` (not `*Actor`) in struct fields referencing other actors. This keeps the dependency surface minimal.
+- Use `NotifyActor` for one-way state updates; use `SendActor` only when you genuinely need confirmation or a return value.
+- Validators are optional but recommended: they let you reject malformed messages before the handler runs.
+- Log at `DEBUG` in handlers; the actor framework already logs message lifecycle at `DEBUG`.
