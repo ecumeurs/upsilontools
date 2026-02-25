@@ -227,6 +227,21 @@ See issue [`20260223_actor_deadlock_risk.md`](../../../../issues/20260223_actor_
 
 ---
 
+## Testing Actors (The "Stopper" Pattern)
+
+Because actors process messages asynchronously, testing them in a synchronous test function can be challenging. A common pattern to solve this is using **Stoppers** in your mock or fake actors.
+
+### What is a Stopper?
+A "Stopper" is a mechanism that allows a test to block until the actor receives a specific message. It is typically implemented in a test double (like a `FakeController` or `FakeActor`) as a map of channels:
+`Stoppers map[string]chan *message.Message`. The key is typically the string reflection of a specific message type.
+
+### How to use Stoppers in Tests
+1. **Registration**: In the test, register a stopper channel for each expected message type.
+2. **Triggering**: In the mock actor's message handlers, route incoming messages to a `triggerStopper()` helper method. If a stopper channel exists for that message type, the message is pushed onto the channel.
+3. **Blocking & Asserting**: The test runner explicitly waits on the stopper channel. This halts test execution until the message arrives, avoiding race conditions and allowing the test to assert on the payload of the message exactly when it occurs.
+
+---
+
 ## Tips
 
 - Keep your method structs **outside** the actor's package. This prevents cyclic imports when two actors need to reference each other's method types.

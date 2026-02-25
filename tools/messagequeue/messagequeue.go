@@ -2,20 +2,14 @@ package messagequeue
 
 import (
 	"fmt"
-	"reflect"
 
 	"github.com/ecumeurs/upsilontools/tools/messagequeue/message"
 	"github.com/sirupsen/logrus"
 )
 
-type internalMessage struct {
-	Message  *message.Message
-	Callback chan *message.Message
-}
-
 type MessageQueue struct {
 	Name                  string
-	inputChan             chan internalMessage
+	inputChan             chan *message.Message
 	executorReplyChan     chan *message.Message
 	executorChan          chan *message.Message
 	stopChan              chan bool
@@ -23,16 +17,16 @@ type MessageQueue struct {
 	dontAcceptNewMessages bool
 	logger                *logrus.Entry
 
-	currentMessage *internalMessage
+	currentMessage *message.Message
 
-	messages []internalMessage
+	messages []*message.Message
 }
 
 // New
 func New(name string) *MessageQueue {
 	mq := &MessageQueue{
 		Name:                  name,
-		inputChan:             make(chan internalMessage),
+		inputChan:             make(chan *message.Message),
 		executorReplyChan:     make(chan *message.Message),
 		executorChan:          make(chan *message.Message),
 		stopChan:              make(chan bool),
@@ -52,12 +46,12 @@ func (mq *MessageQueue) PrintStack() {
 	// format all pending messages as a string
 	var pendingMessages string
 	for _, msg := range mq.messages {
-		pendingMessages += fmt.Sprintf("%s - %s,", msg.Message.String(), reflect.TypeOf(msg.Message.TargetMethod).String())
+		pendingMessages += fmt.Sprintf("%s - %s,", msg.String(), msg.TargetString())
 	}
 
 	var currentMessage string
 	if mq.currentMessage != nil {
-		currentMessage = mq.currentMessage.Message.String()
+		currentMessage = mq.currentMessage.String()
 	} else {
 		currentMessage = "None"
 	}
@@ -77,49 +71,39 @@ func (mq *MessageQueue) Start() {
 			select {
 			case msg := <-mq.inputChan:
 				if mq.dontAcceptNewMessages {
-					mq.logger.WithField("message", msg.Message.String()).Debug("Message queue is stopping, ignoring message")
+					mq.logger.WithField("message", msg.String()).Debug("Message queue is stopping, ignoring message")
 					continue
 				}
 				mq.logger.WithFields(logrus.Fields{
-					"message":      msg.Message.String(),
-					"message_type": reflect.TypeOf(msg.Message.TargetString())}).Debug("Received message")
+					"message":      msg.String(),
+					"message_type": msg.TargetString()}).Debug("Received message")
 				mq.messages = append(mq.messages, msg)
 				if mq.currentMessage == nil {
-					mq.currentMessage = &msg
+					mq.currentMessage = msg
 					go func(msg *message.Message) {
 						mq.logger.WithFields(logrus.Fields{
 							"message":      msg.String(),
 							"message_type": msg.TargetString()}).Debug("Executing message")
 
 						mq.executorChan <- msg
-					}(msg.Message)
+					}(msg)
 				}
 			case msg := <-mq.executorReplyChan:
 				mq.logger.WithFields(logrus.Fields{
 					"message":      msg.String(),
-					"message_type": msg.TargetString()}).Debug("Reply Received")
+					"message_type": msg.TargetString()}).Debug("Execution Ack Received")
 
-				if mq.currentMessage.Callback != nil {
-
-					go func(repl *message.Message, callback chan *message.Message) {
-						mq.logger.WithFields(logrus.Fields{
-							"message":      msg.String(),
-							"message_type": msg.TargetString()}).Debug("Executing ReplyCallback")
-
-						callback <- repl
-					}(msg, mq.currentMessage.Callback)
-				}
 				mq.currentMessage = nil
 				mq.messages = mq.messages[1:]
 
 				if len(mq.messages) > 0 {
-					mq.currentMessage = &mq.messages[0]
+					mq.currentMessage = mq.messages[0]
 					go func(msg *message.Message) {
 						mq.logger.WithFields(logrus.Fields{
 							"message":      msg.String(),
 							"message_type": msg.TargetString()}).Debug("Executing New Message")
 						mq.executorChan <- msg
-					}(mq.currentMessage.Message)
+					}(mq.currentMessage)
 				} else {
 					mq.logger.Debug("Message queue is empty")
 					if mq.dontAcceptNewMessages {
@@ -153,12 +137,9 @@ func (mq *MessageQueue) PrepareStop() chan bool {
 }
 
 // Send a message to the message queue
-func (mq *MessageQueue) Send(msg *message.Message, callback chan *message.Message) {
+func (mq *MessageQueue) Send(msg *message.Message) {
 	if !mq.dontAcceptNewMessages {
-		mq.inputChan <- internalMessage{
-			Message:  msg,
-			Callback: callback,
-		}
+		mq.inputChan <- msg
 	} else {
 		mq.logger.WithField("message", msg.String()).Debug("Message queue is stopping, ignoring message")
 	}
@@ -167,10 +148,7 @@ func (mq *MessageQueue) Send(msg *message.Message, callback chan *message.Messag
 // Send a message to the message queue and forget (wont reply)
 func (mq *MessageQueue) SendAndForget(msg *message.Message) {
 	if !mq.dontAcceptNewMessages {
-		mq.inputChan <- internalMessage{
-			Message:  msg,
-			Callback: nil,
-		}
+		mq.inputChan <- msg
 	} else {
 		mq.logger.WithField("message", msg.String()).Debug("Message queue is stopping, ignoring message")
 	}

@@ -29,6 +29,7 @@ type Message struct {
 	ErrorKey          string
 	HasBeenReplied    bool
 	ShouldBeRepliedTo bool
+	ReplyChan         chan *Message
 }
 
 // New

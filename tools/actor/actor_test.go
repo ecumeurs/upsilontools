@@ -1,166 +1,182 @@
 package actor
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/ecumeurs/upsilontools/tools/messagequeue/message"
 	"github.com/sirupsen/logrus"
 )
 
+func init() {
+	logrus.SetLevel(logrus.DebugLevel)
+}
+
 type TestActor struct {
 	Actor
-}
-type TestActorRequest struct{}
-type TestActorReply struct{}
-type TestActorReplyRequest struct{}
-type TestActorRequestError struct{}
-type TestActorRequestWithParam struct {
-	Param string
+	Counter int
+	TA1     *TestActor
+	TA2     *TestActor
 }
 
-// NewTest
 func NewTest(name string) *TestActor {
 	r := &TestActor{
-		Actor: *New(name),
+		Actor:   *New(name),
+		Counter: 0,
 	}
-	r.AddMethod(TestActorRequest{}, r.testActorRequest, nil)
-	r.AddMethod(TestActorRequestError{}, r.testActorRequestError, nil)
-	r.AddMethod(TestActorRequestWithParam{}, r.testActorRequestWithParam, nil)
-
+	// We no longer arbitrarily map here, we set handlers in tests
 	return r
 }
 
-func NewReplierTest(name string) *TestActor {
-	r := &TestActor{
-		Actor: *New(name),
+// --- NEW V2 TESTS (ISS-004 / ISS-001) ---
+
+type TestV2Notification struct{ ID int }
+type TestV2Call struct{ ID int }
+type TestV2Reply struct{ ID int }
+
+// 1. One notification, then another
+func TestActorV2_Notifications(t *testing.T) {
+	a := NewTest("NotifActor")
+	done := make(chan bool)
+	a.AddNotificationHandler(TestV2Notification{}, func(ctx NotificationContext) {
+		msg := ctx.Msg.TargetMethod.(TestV2Notification)
+		a.Counter += msg.ID
+		if a.Counter == 3 {
+			done <- true
+		}
+	}, nil)
+
+	a.Start()
+	a.NotifyActor(message.Create(nil, TestV2Notification{ID: 1}, nil))
+	a.NotifyActor(message.Create(nil, TestV2Notification{ID: 2}, nil))
+	<-done
+	a.Stop()
+}
+
+// 2. One call, then another; expecting replies
+func TestActorV2_Calls(t *testing.T) {
+	a := NewTest("CallActor")
+	a.AddCallHandler(TestV2Call{}, func(ctx CallContext) {
+		msg := ctx.Msg.TargetMethod.(TestV2Call)
+		a.Counter += msg.ID
+		ctx.Reply(ctx.Msg.Reply())
+	}, nil)
+
+	a.Start()
+	resChan := make(chan *message.Message)
+	a.SendActor(message.Create(nil, TestV2Call{ID: 5}, TestV2Reply{}), resChan)
+	<-resChan
+	a.SendActor(message.Create(nil, TestV2Call{ID: 10}, TestV2Reply{}), resChan)
+	<-resChan
+	if a.Counter != 15 {
+		t.Errorf("Expected 15, got %d", a.Counter)
 	}
-	r.AddMethod(TestActorReplyRequest{}, r.testActorReplier, nil)
-
-	return r
+	a.Stop()
 }
 
-func (a *TestActor) testActorRequest(msg *message.Message) bool {
-	fmt.Println("testActorRequest")
-	a.Reply(msg, msg.Reply())
-	return true
-}
+// 3. Expecting replies (using AddReplyHandler)
+func TestActorV2_Replies(t *testing.T) {
+	// A calls B. B replies to A. A processes reply.
+	actorA := NewTest("ActorA")
+	actorB := NewTest("ActorB")
 
-func (a *TestActor) testActorRequestError(msg *message.Message) bool {
-	fmt.Println("testActorRequestError")
-	a.Reply(msg, msg.ReplyWithError("some error", "some error key"))
-	return true
-}
+	done := make(chan bool)
 
-func (a *TestActor) testActorReplier(msg *message.Message) bool {
-	a.Logger.Info("testActorReplier Received message: ", msg.String())
-	a.Reply(msg, msg.Reply())
-	return true
-}
-
-func (a *TestActor) testActorRequestWithParam(msg *message.Message) bool {
-	fmt.Println("testActorRequestWithParam")
-	return true
-}
-
-func TestActorSendMessage(t *testing.T) {
-	testActor := NewTest("test")
-
-	testActor.Start()
-
-	resChan := make(chan *message.Message)
-	defer close(resChan)
-	req := message.New()
-	req.TargetMethod = TestActorRequest{}
-
-	testActor.SendActor(req, resChan)
-
-	<-resChan
-
-	testActor.Stop()
-}
-
-func TestActorToActorMessaging(t *testing.T) {
-
-	testActor := NewTest("test")
-	testActor.Start()
-
-	testActor2 := NewReplierTest("test2")
-	testActor2.Start()
-
-	testActor.AddMethod(TestActorReplyRequest{}, func(msg *message.Message) (handled bool) {
-		testActor.Logger.Info("testActor received message: TestActorReplyRequest")
-		testActor2.SendActor(message.Create(nil, TestActorReplyRequest{}, TestActorReply{}), testActor.GetCallbackChan())
-		testActor.Reply(msg, msg.Reply())
-		return true
+	actorB.AddCallHandler(TestV2Call{}, func(ctx CallContext) {
+		ctx.Reply(ctx.Msg.Reply())
 	}, nil)
 
-	replyChan := make(chan *message.Message)
-	defer close(replyChan)
-
-	testActor.AddReply(TestActorReply{}, func(msg *message.Message) (handled bool) {
-		testActor.Logger.Info("testActor received reply: TestActorReply")
-		replyChan <- msg
-		// replies don't necessitate a Reply()/NoReply() call
-		return true
+	actorA.AddReplyHandler(TestV2Reply{}, func(ctx ReplyContext) {
+		actorA.Counter++
+		done <- true
 	}, nil)
 
-	resChan := make(chan *message.Message)
-	defer close(resChan)
-	req := message.New()
-	req.TargetMethod = TestActorReplyRequest{}
+	// dummy method to kick off the call
+	actorA.AddNotificationHandler(TestV2Notification{}, func(ctx NotificationContext) {
+		actorB.SendActor(message.Create(nil, TestV2Call{ID: 1}, TestV2Reply{}), actorA.GetCallbackChan())
+	}, nil)
 
-	testActor.SendActor(req, resChan)
+	actorA.Start()
+	actorB.Start()
 
-	logrus.Info("Waiting for request to be received")
-	<-resChan
-	logrus.Info("Waiting for reply")
-	<-replyChan
-	logrus.Info("Reply received")
+	actorA.NotifyActor(message.Create(nil, TestV2Notification{}, nil))
+	<-done
 
-	testActor.Stop()
-	testActor2.Stop()
+	if actorA.Counter != 1 {
+		t.Errorf("A did not process reply")
+	}
+
+	actorA.Stop()
+	actorB.Stop()
 }
 
-func TestBlockingActorToActorMessaging(t *testing.T) {
+// 4. Context management example
+func TestActorV2_ContextManagement(t *testing.T) {
+	// A receives a Call. Stores ctx. Triggers Notification to itself. Notif handler unstashes and replies.
+	a := NewTest("CtxActor")
+	var savedCtx CallContext
 
-	testActor := NewTest("test")
-	testActor.Start()
-
-	testActor2 := NewReplierTest("test2")
-	testActor2.Start()
-
-	testActor.AddMethod(TestActorReplyRequest{}, func(msg *message.Message) (handled bool) {
-		testActor.Logger.Info("testActor received message: TestActorReplyRequest")
-
-		localReplyChan := make(chan *message.Message)
-		defer close(localReplyChan)
-
-		testActor2.SendActor(message.Create(nil, TestActorReplyRequest{}, TestActorReply{}), localReplyChan)
-
-		testActor.Logger.Info("Waiting for reply")
-		<-localReplyChan
-
-		// won't proc a Reply slot in the actor as the reply is handled by the callback `localReplyChan`
-		// this method allows for a multistep action to occurs in a single method, but is blocking the whole actor during this step
-		// (the actor will still accepts new message as it's handled by the queue thread)
-		testActor.Logger.Info("Reply received")
-
-		testActor.Reply(msg, msg.Reply())
-		return true
+	a.AddCallHandler(TestV2Call{}, func(ctx CallContext) {
+		// Defer the reply and store it
+		ctx.DeferReply()
+		savedCtx = ctx
+		// Notify self to finish it later
+		a.NotifyActor(message.Create(nil, TestV2Notification{}, nil))
 	}, nil)
 
+	a.AddNotificationHandler(TestV2Notification{}, func(ctx NotificationContext) {
+		a.Counter++
+		// Use saved context to finish the call
+		savedCtx.Reply(savedCtx.Msg.Reply())
+	}, nil)
+
+	a.Start()
 	resChan := make(chan *message.Message)
-	defer close(resChan)
-	req := message.New()
-	req.TargetMethod = TestActorReplyRequest{}
+	a.SendActor(message.Create(nil, TestV2Call{}, TestV2Reply{}), resChan)
+	<-resChan // waiting for the deferred reply
 
-	testActor.SendActor(req, resChan)
+	if a.Counter != 1 {
+		t.Errorf("Counter not updated via deferred logic")
+	}
+	a.Stop()
+}
 
-	logrus.Info("Waiting for reply to be received")
-	<-resChan
-	logrus.Info("Request fully processed")
+// 5. Sync between multiple actors
+func TestActorV2_Sync(t *testing.T) {
+	// Multiple actors syncing without blocking executors inline.
+	syncActor := NewTest("SyncActor")
+	w1 := NewTest("Worker1")
+	w2 := NewTest("Worker2")
 
-	testActor.Stop()
-	testActor2.Stop()
+	w1Done := make(chan bool)
+	w2Done := make(chan bool)
+
+	w1.AddCallHandler(TestV2Call{}, func(ctx CallContext) { ctx.Reply(ctx.Msg.Reply()) }, nil)
+	w2.AddCallHandler(TestV2Call{}, func(ctx CallContext) { ctx.Reply(ctx.Msg.Reply()) }, nil)
+
+	syncActor.AddNotificationHandler(TestV2Notification{}, func(ctx NotificationContext) {
+		// Ask w1 and w2
+		w1.SendActor(message.Create(nil, TestV2Call{ID: 1}, TestV2Reply{}), syncActor.GetCallbackChan())
+		w2.SendActor(message.Create(nil, TestV2Call{ID: 2}, TestV2Reply{}), syncActor.GetCallbackChan())
+	}, nil)
+
+	syncActor.AddReplyHandler(TestV2Reply{}, func(ctx ReplyContext) {
+		syncActor.Counter++
+		if syncActor.Counter == 1 {
+			w1Done <- true
+		} else if syncActor.Counter == 2 {
+			w2Done <- true
+		}
+	}, nil)
+
+	syncActor.Start()
+	w1.Start()
+	w2.Start()
+
+	syncActor.NotifyActor(message.Create(nil, TestV2Notification{}, nil))
+	<-w1Done
+	<-w2Done
+
+	syncActor.Stop()
+	w1.Stop()
+	w2.Stop()
 }

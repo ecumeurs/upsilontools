@@ -29,7 +29,9 @@ func TestSendOneSimpleMessageQueue(t *testing.T) {
 
 	cb := make(chan *message.Message) // callback
 	defer close(cb)
-	mq.Send(message.Create(nil, "test", "test"), cb)
+	msg := message.Create(nil, "test", nil)
+	msg.ReplyChan = cb
+	mq.Send(msg)
 
 	replied := <-cb
 	if replied.Content != "Done" {
@@ -71,11 +73,11 @@ func TestSendMultipleSimpleMessageQueue(t *testing.T) {
 		}
 	}()
 
-	mq.Send(message.Create(nil, "test", "test"), cb)
-	mq.Send(message.Create(nil, "test", "test"), cb)
-	mq.Send(message.Create(nil, "test", "test"), cb)
-	mq.Send(message.Create(nil, "test", "test"), cb)
-	mq.Send(message.Create(nil, "test", "test"), cb)
+	for i := 0; i < 5; i++ {
+		msg := message.Create(nil, "test", nil)
+		msg.ReplyChan = cb
+		mq.Send(msg)
+	}
 
 	<-time.After(1 * time.Second)
 
@@ -124,7 +126,9 @@ func TestSendHundredsSimpleMessageQueue(t *testing.T) {
 	}()
 
 	for i := 0; i < max; i++ {
-		mq.Send(message.Create(i, "test", "test"), cb)
+		msg := message.Create(i, "test", nil)
+		msg.ReplyChan = cb
+		mq.Send(msg)
 	}
 
 	<-end
