@@ -2,7 +2,12 @@ package tools
 
 import (
 	"math/rand"
+	"time"
 )
+
+func Seed() {
+	rand.Seed(time.Now().UnixNano())
+}
 
 var randInt = rand.Intn
 
