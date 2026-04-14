@@ -135,3 +135,63 @@ func TestSendHundredsSimpleMessageQueue(t *testing.T) {
 
 	mq.Stop()
 }
+
+func TestMessageQueue_PanicReproduction(t *testing.T) {
+	// Goal: Reproduce "slice bounds out of range [1:0]" panic
+	// This happens when an ACK is received for an empty queue.
+	mq := New("panic-repro")
+	mq.Start()
+
+	// Bypass Send and trigger the Ack channel directly when messages slice is 0
+	defer func() {
+		if r := recover(); r != nil {
+			t.Logf("Successfully captured expected panic: %v", r)
+		}
+	}()
+
+	logrus.Info("Sending unexpected ACK to empty queue...")
+	mq.GetExecutorReplyChan() <- message.Create(nil, "phantom", nil)
+
+	// If we reach here without recovery, the test failed to highlight the weakness (or it didn't panic)
+	t.Errorf("Queue did not panic on unexpected ACK. Is it already fixed or handled?")
+	mq.Stop()
+}
+
+func TestMessageQueue_ConcurrentLoad(t *testing.T) {
+	// Goal: Stress test the internal slice management under concurrent pressure.
+	// This might highlight the lack of mutex protection for the messages slice header.
+	mq := New("stress-test")
+	mq.Start()
+
+	maxMessages := 1000
+	workers := 10
+
+	done := make(chan bool)
+
+	// Consumer loop
+	go func() {
+		for i := 0; i < maxMessages; i++ {
+			msg := <-mq.GetExecutorChan()
+			mq.GetExecutorReplyChan() <- msg
+		}
+		done <- true
+	}()
+
+	// Producer loop (concurrent)
+	for w := 0; w < workers; w++ {
+		go func(workerID int) {
+			for i := 0; i < maxMessages/workers; i++ {
+				mq.Send(message.Create(i, "load", nil))
+			}
+		}(w)
+	}
+
+	select {
+	case <-done:
+		logrus.Info("Stress test completed successfully")
+	case <-time.After(10 * time.Second):
+		t.Errorf("Stress test timed out - possible deadlock or hang")
+	}
+
+	mq.Stop()
+}

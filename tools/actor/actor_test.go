@@ -1,7 +1,9 @@
 package actor
 
 import (
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/ecumeurs/upsilontools/tools/messagequeue/message"
 	"github.com/sirupsen/logrus"
@@ -179,4 +181,74 @@ func TestActorV2_Sync(t *testing.T) {
 	syncActor.Stop()
 	w1.Stop()
 	w2.Stop()
+}
+
+func TestActor_CallValidationHang(t *testing.T) {
+	// Goal: Highlight the hang when a call validator fails.
+	a := NewTest("ValidationActor")
+	
+	// Register a call handler with a failing validator
+	a.AddCallHandler(TestV2Call{}, func(ctx CallContext) {
+		t.Errorf("Handler should not be called if validator fails")
+	}, func(msg *message.Message) []error {
+		return []error{errors.New("validation failed")} // Return a real error
+	})
+
+	a.Start()
+	
+	resChan := make(chan *message.Message, 1) // buffered to avoid blocking
+	a.SendActor(message.Create(nil, TestV2Call{}, nil), resChan)
+	
+	// The first one should return an error
+	select {
+	case r := <-resChan:
+		logrus.Infof("Msg 1: Received expected error: %s", r.ErrorMessage)
+	case <-time.After(2 * time.Second):
+		t.Errorf("Timeout waiting for validation error reply")
+	}
+
+	// Now send another message. If the queue is hanging, this will never be processed.
+	done := make(chan bool)
+	a.AddNotificationHandler(TestV2Notification{}, func(ctx NotificationContext) {
+		done <- true
+	}, nil)
+
+	a.NotifyActor(message.Create(nil, TestV2Notification{}, nil))
+
+	select {
+	case <-done:
+		logrus.Info("Queue still alive after validation failure")
+	case <-time.After(2 * time.Second):
+		t.Errorf("HIGHLIGHT: Queue is HANGING after validation failure (expected bug)")
+	}
+
+	a.Stop()
+}
+
+func TestActor_UnhandledNotificationHang(t *testing.T) {
+	// Goal: Highlight the hang when a notification is received but no handler exists.
+	a := NewTest("UnhandledActor")
+	a.CrashOnUnhandled = false // Don't panic, just watch it hang
+	
+	a.Start()
+	
+	// Send unhandled notification
+	a.NotifyActor(message.Create(nil, struct{ Unhandled bool }{}, nil))
+	
+	// Now send a handled message. If the queue is hanging, this will never be processed.
+	done := make(chan bool)
+	a.AddNotificationHandler(TestV2Notification{}, func(ctx NotificationContext) {
+		done <- true
+	}, nil)
+
+	a.NotifyActor(message.Create(nil, TestV2Notification{}, nil))
+
+	select {
+	case <-done:
+		logrus.Info("Queue still alive after unhandled notification")
+	case <-time.After(2 * time.Second):
+		t.Errorf("HIGHLIGHT: Queue is HANGING after unhandled notification (expected bug)")
+	}
+
+	a.Stop()
 }
