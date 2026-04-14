@@ -1,6 +1,7 @@
 package messagequeue
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// @test-link [[mech_message_queue]]
 func TestSendOneSimpleMessageQueue(t *testing.T) {
 
 	mq := New("test")
@@ -24,6 +26,9 @@ func TestSendOneSimpleMessageQueue(t *testing.T) {
 		}
 		reply := msg.Reply()
 		reply.Content = "Done"
+		if msg.ReplyChan != nil {
+			msg.ReplyChan <- reply
+		}
 		mq.GetExecutorReplyChan() <- reply
 	}()
 
@@ -57,6 +62,9 @@ func TestSendMultipleSimpleMessageQueue(t *testing.T) {
 			}
 			reply := msg.Reply()
 			reply.Content = "Done"
+			if msg.ReplyChan != nil {
+				msg.ReplyChan <- reply
+			}
 			mq.GetExecutorReplyChan() <- reply
 		}
 	}()
@@ -107,7 +115,10 @@ func TestSendHundredsSimpleMessageQueue(t *testing.T) {
 			}
 			last = msg.Content.(int)
 			reply := msg.Reply()
-			reply.Content = "Done"
+			reply.Content = fmt.Sprintf("Done %d", i)
+			if msg.ReplyChan != nil {
+				msg.ReplyChan <- reply
+			}
 			mq.GetExecutorReplyChan() <- reply
 		}
 		end <- true
@@ -119,8 +130,8 @@ func TestSendHundredsSimpleMessageQueue(t *testing.T) {
 	go func() {
 		for i := 0; i < max; i++ {
 			replied := <-cb
-			if replied.Content != "Done" {
-				t.Errorf("Expected reply to be 'Done', got '%s'", replied.Content)
+			if replied.Content != fmt.Sprintf("Done %d", i) {
+				t.Errorf("Expected reply to be 'Done %d', got '%s'", i, replied.Content)
 			}
 		}
 	}()
@@ -136,24 +147,19 @@ func TestSendHundredsSimpleMessageQueue(t *testing.T) {
 	mq.Stop()
 }
 
-func TestMessageQueue_PanicReproduction(t *testing.T) {
-	// Goal: Reproduce "slice bounds out of range [1:0]" panic
-	// This happens when an ACK is received for an empty queue.
-	mq := New("panic-repro")
+// @test-link [[mech_message_queue]]
+func TestMessageQueue_GracefulPhantomAck(t *testing.T) {
+	// Goal: Ensure "slice bounds out of range [1:0]" panic is gone
+	// and and acknowledgment received for an empty queue is ignored.
+	mq := New("graceful-ack")
 	mq.Start()
 
 	// Bypass Send and trigger the Ack channel directly when messages slice is 0
-	defer func() {
-		if r := recover(); r != nil {
-			t.Logf("Successfully captured expected panic: %v", r)
-		}
-	}()
-
-	logrus.Info("Sending unexpected ACK to empty queue...")
+	logrus.Info("Sending unexpected ACK to empty queue (should be ignored)...")
 	mq.GetExecutorReplyChan() <- message.Create(nil, "phantom", nil)
 
-	// If we reach here without recovery, the test failed to highlight the weakness (or it didn't panic)
-	t.Errorf("Queue did not panic on unexpected ACK. Is it already fixed or handled?")
+	// If we reach here, the panic is successfully avoided
+	logrus.Info("Queue handled phantom ACK gracefully")
 	mq.Stop()
 }
 
@@ -194,4 +200,37 @@ func TestMessageQueue_ConcurrentLoad(t *testing.T) {
 	}
 
 	mq.Stop()
+}
+
+func BenchmarkMessageQueue_Throughput(b *testing.B) {
+	mq := New("bench")
+	mq.Start()
+	defer mq.Stop()
+
+	// Mock executor that ACKs as fast as possible
+	go func() {
+		for {
+			select {
+			case msg := <-mq.GetExecutorChan():
+				reply := msg.Reply()
+				if msg.ReplyChan != nil {
+					msg.ReplyChan <- reply
+				}
+				mq.GetExecutorReplyChan() <- reply
+			case <-mq.stopper:
+				return
+			}
+		}
+	}()
+
+	cb := make(chan *message.Message, 1) // Buffered to avoid blocking the benchmark loop
+	msgTemplate := message.Create(nil, "bench", nil)
+	msgTemplate.ReplyChan = cb
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		mq.Send(msgTemplate)
+		<-cb
+	}
+	b.StopTimer()
 }

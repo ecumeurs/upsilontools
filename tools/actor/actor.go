@@ -38,6 +38,7 @@ type ActorMethod interface {
 
 // NotificationContext wraps a message for fire-and-forget notification handlers.
 // It explicitly lacks Reply() or NoReply() to prevent protocol violations.
+// @spec-link [[mech_actor_handler_context]]
 type NotificationContext struct {
 	// Msg is the original incoming message.
 	// Constraint: Must not be mutated by the handler.
@@ -46,6 +47,7 @@ type NotificationContext struct {
 
 // CallContext wraps a message for request-reply handlers.
 // It provides the necessary methods to complete the synchronized call safely.
+// @spec-link [[mech_actor_handler_context]]
 type CallContext struct {
 	// Msg is the original incoming message.
 	Msg   *message.Message
@@ -152,6 +154,7 @@ type ActorError struct {
 	Err error
 }
 
+// @spec-link [[mech_actor_pattern]]
 type Actor struct {
 	actorName     string
 	queue         messagequeue.MessageQueue
@@ -305,11 +308,13 @@ func (a Actor) Name() string {
 	return a.actorName
 }
 
+// @spec-link [[mech_actor_lifecycle]]
 func (a *Actor) Stop() {
 	a.queue.Stop()
 }
 
 // PrepareToStop will disconnect the actor from the message queue and return a channel that will tell when all pending messages have been processed.
+// @spec-link [[mech_actor_lifecycle]]
 func (a *Actor) PrepareToStop() chan bool {
 	return a.queue.PrepareStop()
 }
@@ -317,6 +322,7 @@ func (a *Actor) PrepareToStop() chan bool {
 // Legacy Reply / NoReply deleted per ISS-004 to enforce Context usage.
 // They are now owned by CallContext.
 
+// @spec-link [[mech_actor_dispatch_loop]]
 func (a *Actor) processReply(msg *message.Message) {
 	a.RequestLogger = a.Logger.WithFields(logrus.Fields{
 		"request_type": "reply",
@@ -376,6 +382,7 @@ func (a *Actor) processReply(msg *message.Message) {
 	}
 }
 
+// @spec-link [[mech_actor_dispatch_loop]]
 func (a *Actor) processMessage(msg *message.Message) {
 	a.RequestLogger = a.Logger.WithFields(logrus.Fields{
 		"request_type": "message",
@@ -417,6 +424,7 @@ func (a *Actor) processMessage(msg *message.Message) {
 			a.RequestLogger.Warn("Call validation failed")
 			rpl := msg.ReplyWithError("Call validation failed", "actor.call.validation")
 			callCtx.Reply(rpl)
+			a.queue.GetExecutorReplyChan() <- msg // Send ACK to queue to unblock
 			return
 		}
 
@@ -514,17 +522,23 @@ func (a *Actor) processMessage(msg *message.Message) {
 		if msg.ShouldBeRepliedTo {
 			msg.HasBeenReplied = true
 			a.queue.GetExecutorReplyChan() <- msg.ReplyWithError("Unhandled message", "actor.message.unhandled")
+		} else {
+			// Acknowledge unhandled notification to unblock the queue
+			msg.HasBeenReplied = true
+			a.queue.GetExecutorReplyChan() <- msg
 		}
 		return
 	}
 }
 
 // Start
+// @spec-link [[mech_actor_lifecycle]]
 func (a *Actor) Start() {
 	a.queue.Start()
 	go func() {
 		a.Logger.Info("Actor started")
 		done := false
+		// @spec-link [[mech_actor_dispatch_loop]]
 		for !done {
 			select {
 			case msg := <-a.queue.GetExecutorChan():

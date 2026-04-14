@@ -36,6 +36,7 @@ type TestV2Call struct{ ID int }
 type TestV2Reply struct{ ID int }
 
 // 1. One notification, then another
+// @test-link [[mech_actor_pattern]]
 func TestActorV2_Notifications(t *testing.T) {
 	a := NewTest("NotifActor")
 	done := make(chan bool)
@@ -112,6 +113,7 @@ func TestActorV2_Replies(t *testing.T) {
 }
 
 // 4. Context management example
+// @test-link [[mech_actor_handler_context]]
 func TestActorV2_ContextManagement(t *testing.T) {
 	// A receives a Call. Stores ctx. Triggers Notification to itself. Notif handler unstashes and replies.
 	a := NewTest("CtxActor")
@@ -143,6 +145,7 @@ func TestActorV2_ContextManagement(t *testing.T) {
 }
 
 // 5. Sync between multiple actors
+// @test-link [[mech_actor_lifecycle]]
 func TestActorV2_Sync(t *testing.T) {
 	// Multiple actors syncing without blocking executors inline.
 	syncActor := NewTest("SyncActor")
@@ -183,6 +186,7 @@ func TestActorV2_Sync(t *testing.T) {
 	w2.Stop()
 }
 
+// @test-link [[mech_actor_pattern]]
 func TestActor_CallValidationHang(t *testing.T) {
 	// Goal: Highlight the hang when a call validator fails.
 	a := NewTest("ValidationActor")
@@ -217,9 +221,9 @@ func TestActor_CallValidationHang(t *testing.T) {
 
 	select {
 	case <-done:
-		logrus.Info("Queue still alive after validation failure")
+		logrus.Info("Queue still alive after validation failure (FIXED)")
 	case <-time.After(2 * time.Second):
-		t.Errorf("HIGHLIGHT: Queue is HANGING after validation failure (expected bug)")
+		t.Errorf("Queue is still HANGING after validation failure")
 	}
 
 	a.Stop()
@@ -245,10 +249,44 @@ func TestActor_UnhandledNotificationHang(t *testing.T) {
 
 	select {
 	case <-done:
-		logrus.Info("Queue still alive after unhandled notification")
+		logrus.Info("Queue still alive after unhandled notification (FIXED)")
 	case <-time.After(2 * time.Second):
-		t.Errorf("HIGHLIGHT: Queue is HANGING after unhandled notification (expected bug)")
+		t.Errorf("Queue is still HANGING after unhandled notification")
 	}
 
 	a.Stop()
+}
+
+func BenchmarkActor_Notify(b *testing.B) {
+	a := New("bench-notif")
+	a.AddNotificationHandler(struct{}{}, func(ctx NotificationContext) {}, nil)
+	a.Start()
+	defer a.Stop()
+
+	msg := message.Create(nil, struct{}{}, nil)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		a.NotifyActor(msg)
+	}
+	b.StopTimer()
+}
+
+func BenchmarkActor_Call(b *testing.B) {
+	a := New("bench-call")
+	a.AddCallHandler(struct{}{}, func(ctx CallContext) {
+		ctx.NoReply()
+	}, nil)
+	a.Start()
+	defer a.Stop()
+
+	cb := make(chan *message.Message, 1)
+	msg := message.Create(nil, struct{}{}, nil)
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		a.SendActor(msg, cb)
+		<-cb
+	}
+	b.StopTimer()
 }

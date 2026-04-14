@@ -2,12 +2,15 @@ package messagequeue
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/ecumeurs/upsilontools/tools/messagequeue/message"
 	"github.com/sirupsen/logrus"
 )
 
+// @spec-link [[mech_message_queue]]
 type MessageQueue struct {
+	mu                    sync.Mutex
 	Name                  string
 	inputChan             chan *message.Message
 	executorReplyChan     chan *message.Message
@@ -43,6 +46,8 @@ func New(name string) *MessageQueue {
 
 // printStack debug function
 func (mq *MessageQueue) PrintStack() {
+	mq.mu.Lock()
+	defer mq.mu.Unlock()
 	// format all pending messages as a string
 	var pendingMessages string
 	for _, msg := range mq.messages {
@@ -70,7 +75,9 @@ func (mq *MessageQueue) Start() {
 		for {
 			select {
 			case msg := <-mq.inputChan:
+				mq.mu.Lock()
 				if mq.dontAcceptNewMessages {
+					mq.mu.Unlock()
 					mq.logger.WithField("message", msg.String()).Debug("Message queue is stopping, ignoring message")
 					continue
 				}
@@ -88,12 +95,19 @@ func (mq *MessageQueue) Start() {
 						mq.executorChan <- msg
 					}(msg)
 				}
+				mq.mu.Unlock()
 			case msg := <-mq.executorReplyChan:
 				mq.logger.WithFields(logrus.Fields{
 					"message":      msg.String(),
 					"message_type": msg.TargetString()}).Debug("Execution Ack Received")
 
+				mq.mu.Lock()
 				mq.currentMessage = nil
+				if len(mq.messages) == 0 {
+					mq.mu.Unlock()
+					mq.logger.Warn("Received Execution Ack but message queue is empty (phantom ACK). Ignoring.")
+					continue
+				}
 				mq.messages = mq.messages[1:]
 
 				if len(mq.messages) > 0 {
@@ -110,6 +124,7 @@ func (mq *MessageQueue) Start() {
 						mq.doneChan <- true
 					}
 				}
+				mq.mu.Unlock()
 			case <-mq.stopChan:
 				mq.logger.Info("Stopping message queue")
 				return
@@ -125,20 +140,25 @@ func (mq *MessageQueue) Stop() {
 
 // PrepareStop will prevent new message from being added to the queue, and will return a channel that will be closed when the queue is empty
 func (mq *MessageQueue) PrepareStop() chan bool {
+	mq.mu.Lock()
+	defer mq.mu.Unlock()
 	mq.dontAcceptNewMessages = true
-	if mq.Length() == 0 {
+	if len(mq.messages) == 0 {
 		go func() {
 			mq.doneChan <- true
 		}()
 	} else {
-		mq.logger.WithField("length", mq.Length()).Debug("Message queue is not empty, waiting for it to be empty")
+		mq.logger.WithField("length", len(mq.messages)).Debug("Message queue is not empty, waiting for it to be empty")
 	}
 	return mq.doneChan
 }
 
 // Send a message to the message queue
 func (mq *MessageQueue) Send(msg *message.Message) {
-	if !mq.dontAcceptNewMessages {
+	mq.mu.Lock()
+	dontAccept := mq.dontAcceptNewMessages
+	mq.mu.Unlock()
+	if !dontAccept {
 		mq.inputChan <- msg
 	} else {
 		mq.logger.WithField("message", msg.String()).Debug("Message queue is stopping, ignoring message")
@@ -147,7 +167,10 @@ func (mq *MessageQueue) Send(msg *message.Message) {
 
 // Send a message to the message queue and forget (wont reply)
 func (mq *MessageQueue) SendAndForget(msg *message.Message) {
-	if !mq.dontAcceptNewMessages {
+	mq.mu.Lock()
+	dontAccept := mq.dontAcceptNewMessages
+	mq.mu.Unlock()
+	if !dontAccept {
 		mq.inputChan <- msg
 	} else {
 		mq.logger.WithField("message", msg.String()).Debug("Message queue is stopping, ignoring message")
@@ -164,6 +187,8 @@ func (mq *MessageQueue) GetExecutorReplyChan() chan *message.Message {
 
 // Length
 func (mq *MessageQueue) Length() int {
+	mq.mu.Lock()
+	defer mq.mu.Unlock()
 	return len(mq.messages)
 }
 
