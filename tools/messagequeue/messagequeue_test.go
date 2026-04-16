@@ -217,7 +217,7 @@ func BenchmarkMessageQueue_Throughput(b *testing.B) {
 					msg.ReplyChan <- reply
 				}
 				mq.GetExecutorReplyChan() <- reply
-			case <-mq.stopper:
+			case <-mq.stopChan:
 				return
 			}
 		}

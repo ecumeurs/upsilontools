@@ -304,7 +304,7 @@ func (a *Actor) AddReplyHandler(method interface{}, handler func(ctx ReplyContex
 	a.replyHandlers[t] = replyHandlerImpl{handler: handler, validator: validator}
 }
 
-func (a Actor) Name() string {
+func (a *Actor) Name() string {
 	return a.actorName
 }
 
