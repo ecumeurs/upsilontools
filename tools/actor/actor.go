@@ -3,6 +3,7 @@ package actor
 import (
 	"fmt"
 	"reflect"
+	"time"
 
 	"github.com/ecumeurs/upsilontools/tools/messagequeue"
 	"github.com/ecumeurs/upsilontools/tools/messagequeue/message"
@@ -585,6 +586,19 @@ func (a *Actor) NotifyActor(msg *message.Message) {
 		"message_type": reflect.TypeOf(msg.TargetMethod).String()}).Debug("Notifying message")
 	msg.ShouldBeRepliedTo = false
 	a.queue.Send(msg)
+}
+
+// SelfNotify sends a notification to the actor's own queue.
+// TargetMethod must be a struct registered via AddNotificationHandler.
+func (a *Actor) SelfNotify(method interface{}) {
+	a.NotifyActor(message.Create(nil, method, nil))
+}
+
+// SelfNotifyDelayed schedules a notification to the actor's own queue after a delay.
+func (a *Actor) SelfNotifyDelayed(method interface{}, delay time.Duration) {
+	time.AfterFunc(delay, func() {
+		a.SelfNotify(method)
+	})
 }
 
 // GetCallbackChan

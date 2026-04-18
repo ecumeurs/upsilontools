@@ -290,3 +290,82 @@ func BenchmarkActor_Call(b *testing.B) {
 	}
 	b.StopTimer()
 }
+
+// 6. Strict FIFO Ordering Verification
+// @spec-link [[mech_actor_dispatch_loop]]
+func TestActor_StrictFIFO(t *testing.T) {
+	a := NewTest("FIFOActor")
+	count := 500
+	received := make([]int, 0, count)
+	done := make(chan bool)
+
+	a.AddNotificationHandler(TestV2Notification{}, func(ctx NotificationContext) {
+		msg := ctx.Msg.TargetMethod.(TestV2Notification)
+		received = append(received, msg.ID)
+		if len(received) == count {
+			done <- true
+		}
+	}, nil)
+
+	a.Start()
+	for i := 0; i < count; i++ {
+		a.NotifyActor(message.Create(nil, TestV2Notification{ID: i}, nil))
+	}
+
+	select {
+	case <-done:
+		for i, id := range received {
+			if id != i {
+				t.Fatalf("FIFO Violation: Expected ID %d at index %d, got %d", i, i, id)
+			}
+		}
+		logrus.Infof("Verified strict FIFO ordering for %d messages", count)
+	case <-time.After(5 * time.Second):
+		t.Errorf("Timeout waiting for FIFO test completion")
+	}
+	a.Stop()
+}
+
+// 7. Delayed Self-Notification Verification
+// @spec-link [[mech_actor_pattern]]
+func TestActor_SelfNotifyDelayed(t *testing.T) {
+	a := NewTest("DelayedActor")
+	received := make([]int, 0)
+	done := make(chan bool)
+
+	a.AddNotificationHandler(TestV2Notification{}, func(ctx NotificationContext) {
+		msg := ctx.Msg.TargetMethod.(TestV2Notification)
+		received = append(received, msg.ID)
+		if msg.ID == 3 {
+			done <- true
+		}
+	}, nil)
+
+	a.Start()
+	
+	// 1. Send immediate notification
+	a.NotifyActor(message.Create(nil, TestV2Notification{ID: 1}, nil))
+	
+	// 2. Schedule delayed notification (ID 3)
+	// This should arrive after ID 2 because of the delay.
+	a.SelfNotifyDelayed(TestV2Notification{ID: 3}, 100*time.Millisecond)
+	
+	// 3. Send another immediate notification (ID 2)
+	a.NotifyActor(message.Create(nil, TestV2Notification{ID: 2}, nil))
+
+	select {
+	case <-done:
+		if len(received) != 3 {
+			t.Fatalf("Expected 3 messages, got %d", len(received))
+		}
+		// Order must be 1, 2, 3 because 3 was delayed while 1 and 2 were already in or entering the queue.
+		if received[0] != 1 || received[1] != 2 || received[2] != 3 {
+			t.Errorf("Ordering failure in delayed notification: %v", received)
+		}
+		logrus.Infof("Verified delayed self-notification ordering: %v", received)
+	case <-time.After(1 * time.Second):
+		t.Errorf("Timeout waiting for delayed notification")
+	}
+	a.Stop()
+}
+
