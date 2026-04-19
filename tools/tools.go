@@ -9,6 +9,10 @@ func Seed() {
 	rand.Seed(time.Now().UnixNano())
 }
 
+func SeedWith(s int64) {
+	rand.Seed(s)
+}
+
 var randInt = rand.Intn
 
 type IntRange struct {

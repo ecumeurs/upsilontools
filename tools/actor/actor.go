@@ -328,7 +328,7 @@ func (a *Actor) processReply(msg *message.Message) {
 	a.RequestLogger = a.Logger.WithFields(logrus.Fields{
 		"request_type": "reply",
 		"message":      msg.String(),
-		"message_type": reflect.TypeOf(msg.TargetMethod).String(),
+		"message_type": msg.TargetString(),
 	})
 	if a.NewReplyReceived != nil {
 		a.NewReplyReceived(a, msg)
@@ -365,7 +365,11 @@ func (a *Actor) processReply(msg *message.Message) {
 	if !found {
 		a.RequestLogger.Warn("Unexpected reply")
 		if a.CrashOnUnhandled {
-			panic(fmt.Sprintf("Unhandled reply msg type %v", typ))
+			typeName := "<nil>"
+			if typ != nil {
+				typeName = typ.String()
+			}
+			panic(fmt.Sprintf("Unhandled reply msg type %s", typeName))
 		}
 		return
 	}
@@ -388,7 +392,7 @@ func (a *Actor) processMessage(msg *message.Message) {
 	a.RequestLogger = a.Logger.WithFields(logrus.Fields{
 		"request_type": "message",
 		"message":      msg.String(),
-		"message_type": reflect.TypeOf(msg.TargetMethod).String(),
+		"message_type": msg.TargetString(),
 	})
 
 	if a.NewMessageReceived != nil {
@@ -550,7 +554,7 @@ func (a *Actor) Start() {
 			case msg := <-a.CallbackChan:
 				a.Logger.WithFields(logrus.Fields{
 					"message":      msg.String(),
-					"message_type": reflect.TypeOf(msg.TargetMethod).String()}).Debug("About to process reply")
+					"message_type": msg.TargetString()}).Debug("About to process reply")
 				a.processReply(msg)
 			case <-a.stopper:
 				done = true
@@ -573,17 +577,23 @@ func (a *Actor) GetQueue() *messagequeue.MessageQueue {
 }
 
 func (a *Actor) SendActor(msg *message.Message, res chan *message.Message) {
+	if msg.CallbackMethod == nil {
+		panic(fmt.Sprintf("[%s] Protocol violation: SendActor called with nil CallbackMethod for message %s. Use NotifyActor for fire-and-forget.", a.Name(), msg.TargetString()))
+	}
+	if res == nil {
+		panic(fmt.Sprintf("[%s] Protocol violation: SendActor called with nil response channel for message %s. Provide a channel or use NotifyActor if you don't care about the response.", a.Name(), msg.TargetString()))
+	}
 	msg.ReplyChan = res
 	a.Logger.WithFields(logrus.Fields{
 		"message":      msg.String(),
-		"message_type": reflect.TypeOf(msg.TargetMethod).String()}).Debug("Sending message")
+		"message_type": msg.TargetString()}).Debug("Sending message")
 	a.queue.Send(msg)
 }
 
 func (a *Actor) NotifyActor(msg *message.Message) {
 	a.Logger.WithFields(logrus.Fields{
 		"message":      msg.String(),
-		"message_type": reflect.TypeOf(msg.TargetMethod).String()}).Debug("Notifying message")
+		"message_type": msg.TargetString()}).Debug("Notifying message")
 	msg.ShouldBeRepliedTo = false
 	a.queue.Send(msg)
 }
@@ -599,6 +609,11 @@ func (a *Actor) SelfNotifyDelayed(method interface{}, delay time.Duration) {
 	time.AfterFunc(delay, func() {
 		a.SelfNotify(method)
 	})
+}
+
+// PrintStack
+func (a *Actor) PrintStack() {
+	a.queue.PrintStack()
 }
 
 // GetCallbackChan

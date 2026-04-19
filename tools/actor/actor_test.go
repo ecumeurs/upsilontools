@@ -201,7 +201,7 @@ func TestActor_CallValidationHang(t *testing.T) {
 	a.Start()
 	
 	resChan := make(chan *message.Message, 1) // buffered to avoid blocking
-	a.SendActor(message.Create(nil, TestV2Call{}, nil), resChan)
+	a.SendActor(message.Create(nil, TestV2Call{}, TestV2Reply{}), resChan)
 	
 	// The first one should return an error
 	select {
@@ -281,7 +281,7 @@ func BenchmarkActor_Call(b *testing.B) {
 	defer a.Stop()
 
 	cb := make(chan *message.Message, 1)
-	msg := message.Create(nil, struct{}{}, nil)
+	msg := message.Create(nil, struct{}{}, struct{}{})
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
