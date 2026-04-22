@@ -353,11 +353,13 @@ func (a *Actor) processReply(msg *message.Message) {
 	if rh, found := a.replyHandlers[typ]; found {
 		if rh.validator != nil && len(rh.validator(msg)) > 0 {
 			a.RequestLogger.Warn("Reply validation failed")
-			// Cannot "reply" to a reply. Just drop.
+			// Cannot "reply" to a reply. Just drop but ACK.
+			a.queue.GetExecutorReplyChan() <- msg
 			return
 		}
 		replyCtx := ReplyContext{Msg: msg}
 		rh.handler(replyCtx)
+		a.queue.GetExecutorReplyChan() <- msg
 		return
 	}
 
@@ -371,18 +373,22 @@ func (a *Actor) processReply(msg *message.Message) {
 			}
 			panic(fmt.Sprintf("Unhandled reply msg type %s", typeName))
 		}
+		a.queue.GetExecutorReplyChan() <- msg
 		return
 	}
 
 	if v.Validator(msg) != nil {
 		a.RequestLogger.Warn("Reply validation failed")
+		a.queue.GetExecutorReplyChan() <- msg
 		return // we can't reply to a reply anyway
 	}
 
 	if v.Handler(msg) {
+		a.queue.GetExecutorReplyChan() <- msg
 		return
 	} else {
 		a.RequestLogger.Warn("Unhandled reply")
+		a.queue.GetExecutorReplyChan() <- msg
 		return
 	}
 }
@@ -540,6 +546,19 @@ func (a *Actor) processMessage(msg *message.Message) {
 // @spec-link [[mech_actor_lifecycle]]
 func (a *Actor) Start() {
 	a.queue.Start()
+
+	// Redirect replies to the message queue to avoid deadlocks
+	go func() {
+		for {
+			select {
+			case msg := <-a.CallbackChan:
+				a.queue.Send(msg)
+			case <-a.stopper:
+				return
+			}
+		}
+	}()
+
 	go func() {
 		a.Logger.Info("Actor started")
 		done := false
@@ -547,15 +566,17 @@ func (a *Actor) Start() {
 		for !done {
 			select {
 			case msg := <-a.queue.GetExecutorChan():
-				a.Logger.WithFields(logrus.Fields{
-					"message":      msg.String(),
-					"message_type": reflect.TypeOf(msg.TargetMethod).String()}).Debug("About to process message")
-				a.processMessage(msg)
-			case msg := <-a.CallbackChan:
-				a.Logger.WithFields(logrus.Fields{
-					"message":      msg.String(),
-					"message_type": msg.TargetString()}).Debug("About to process reply")
-				a.processReply(msg)
+				if msg.Type == message.Reply {
+					a.Logger.WithFields(logrus.Fields{
+						"message":      msg.String(),
+						"message_type": msg.TargetString()}).Debug("About to process reply from queue")
+					a.processReply(msg)
+				} else {
+					a.Logger.WithFields(logrus.Fields{
+						"message":      msg.String(),
+						"message_type": msg.TargetString()}).Debug("About to process message from queue")
+					a.processMessage(msg)
+				}
 			case <-a.stopper:
 				done = true
 			}

@@ -11,12 +11,13 @@ import (
 type MessageType int
 
 const (
-	Request int = 1
-	Reply   int = 2
+	Request MessageType = 1
+	Reply   MessageType = 2
 )
 
 type Message struct {
 	RequestId uuid.UUID
+	Type      MessageType
 
 	Content interface{}
 
@@ -36,6 +37,7 @@ type Message struct {
 func New() *Message {
 	return &Message{
 		RequestId:         uuid.New(),
+		Type:              Request,
 		EmitedAt:          time.Now(),
 		HasBeenReplied:    false,
 		ShouldBeRepliedTo: true,
@@ -56,6 +58,7 @@ func Create(Content, TargetMethod, CallbackMethod interface{}) *Message {
 func (request *Message) Reply() *Message {
 	return &Message{
 		RequestId:         request.RequestId,
+		Type:              Reply,
 		EmitedAt:          time.Now(),
 		TargetMethod:      request.CallbackMethod,
 		CallbackMethod:    request.TargetMethod,
