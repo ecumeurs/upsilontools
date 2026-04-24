@@ -292,7 +292,7 @@ func BenchmarkActor_Call(b *testing.B) {
 }
 
 // 6. Strict FIFO Ordering Verification
-// @spec-link [[mech_actor_dispatch_loop]]
+// @test-link [[mech_actor_dispatch_loop]]
 func TestActor_StrictFIFO(t *testing.T) {
 	a := NewTest("FIFOActor")
 	count := 500
@@ -327,7 +327,7 @@ func TestActor_StrictFIFO(t *testing.T) {
 }
 
 // 7. Delayed Self-Notification Verification
-// @spec-link [[mech_actor_pattern]]
+// @test-link [[mech_actor_pattern]]
 func TestActor_SelfNotifyDelayed(t *testing.T) {
 	a := NewTest("DelayedActor")
 	received := make([]int, 0)

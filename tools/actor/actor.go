@@ -632,6 +632,21 @@ func (a *Actor) SelfNotifyDelayed(method interface{}, delay time.Duration) {
 	})
 }
 
+// SelfNotifyMessageDelayed schedules an existing message to the actor's own queue after a delay.
+func (a *Actor) SelfNotifyMessageDelayed(msg *message.Message, delay time.Duration) {
+	time.AfterFunc(delay, func() {
+		a.NotifyActor(msg)
+	})
+}
+
+// SelfDispatchMessageDelayed schedules an existing message to the actor's own queue after a delay,
+// preserving the message's original ShouldBeRepliedTo status.
+func (a *Actor) SelfDispatchMessageDelayed(msg *message.Message, delay time.Duration) {
+	time.AfterFunc(delay, func() {
+		a.queue.Send(msg)
+	})
+}
+
 // PrintStack
 func (a *Actor) PrintStack() {
 	a.queue.PrintStack()
