@@ -36,6 +36,9 @@ func (r IntRange) Random() int {
 }
 
 func RandomInt(min, max int) int {
+	if min >= max {
+		return min
+	}
 	return min + randInt(max-min)
 }
 
