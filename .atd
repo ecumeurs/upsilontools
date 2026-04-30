@@ -1,0 +1,80 @@
+{
+  "docs_path": "docs/",
+  "diff_similarity_threshold": 0.85,
+  "bloating_factor": {
+    "default": 0.8,
+    "type_overrides": {
+      "REQUIREMENT": 0.3,
+      "SPECIFICATION": 0.3,
+      "MODULE": 0.3,
+      "USECASE": 0.1,
+      "USER_STORY": 0.1,
+      "API": 0.1
+    }
+  },
+  "model": "llama3.2",
+  "logging": {
+    "log_path": ".agent/logs/atd_trace.log"
+  },
+  "llm": {
+    "providers": [
+      {
+        "name": "remote",
+        "base_url": "http://192.168.1.10:11434",
+        "timeout_ms": 2000
+      },
+      {
+        "name": "local",
+        "base_url": "http://localhost:11434",
+        "timeout_ms": 500
+      },
+      {
+        "name": "ide_agent",
+        "type": "passthrough"
+      }
+    ],
+    "models": {
+      "llama3.2": {
+        "tasks": [
+          "audit_bloat",
+          "intent_extract",
+          "snapshot"
+        ]
+      },
+      "llama3.1:8b": {
+        "tasks": [
+          "audit_bloat",
+          "intent_extract",
+          "snapshot",
+          "dissect",
+          "recon"
+        ]
+      },
+      "deepseek-r1:7b": {
+        "tasks": [
+          "audit_code",
+          "compare",
+          "congruence",
+          "reconcile",
+          "fix_split",
+          "audit_bloat",
+          "intent_extract",
+          "snapshot"
+        ]
+      },
+      "qwen2.5-coder:14b": {
+        "tasks": [
+          "dissect",
+          "recon",
+          "snapshot"
+        ]
+      },
+      "nomic-embed-text": {
+        "tasks": [
+          "embed"
+        ]
+      }
+    },
+    "fallback_model": "llama3.2"
+  }
+}
