@@ -8,7 +8,8 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// @spec-link [[mech_message_queue]]
+// @spec-link [[mechanic_message_queue]]
+// @spec-link [[mechanic_message_queue_management]]
 type MessageQueue struct {
 	mu                    sync.Mutex
 	Name                  string
@@ -25,7 +26,14 @@ type MessageQueue struct {
 	messages []*message.Message
 }
 
-// New
+// New creates a new MessageQueue instance with the given name.
+// It initializes all necessary internal channels for message input, execution,
+// and coordination, as well as the logger with the appropriate context.
+// The returned queue is ready to be started via the Start() method.
+// This constructor is the standard way to instantiate a FIFO message queue.
+// It ensures that all internal maps and channels are properly allocated.
+// The queue name is used for logging and observability purposes throughout its lifecycle.
+// Callers must call Start() to begin background processing of incoming stimuli.
 func New(name string) *MessageQueue {
 	mq := &MessageQueue{
 		Name:                  name,
