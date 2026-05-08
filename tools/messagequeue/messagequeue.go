@@ -52,7 +52,8 @@ func New(name string) *MessageQueue {
 	return mq
 }
 
-// printStack debug function
+// PrintStack logs the current contents of the message queue, including the message currently
+// being processed and all pending messages in the FIFO buffer.
 func (mq *MessageQueue) PrintStack() {
 	mq.mu.Lock()
 	defer mq.mu.Unlock()
@@ -75,8 +76,10 @@ func (mq *MessageQueue) PrintStack() {
 	}).Info("Stack")
 }
 
-// Start a thread that will expect input messages to come in, and will store them in the messages slice
-// When a message is received, it will be sent to the executorReplyChan if no other message are being processed at the moment.
+// Start begins the background processing loop for the message queue.
+// It spawns a goroutine that orchestrates the FIFO delivery of messages to the executor.
+// The loop handles incoming stimuli, execution acknowledgments, and shutdown signals.
+// @spec-link [[mechanic_message_queue_management]]
 func (mq *MessageQueue) Start() {
 	go func() {
 		mq.logger.Info("Starting message queue")
@@ -141,12 +144,15 @@ func (mq *MessageQueue) Start() {
 	}()
 }
 
-// Stop the message queue
+// Stop immediately terminates the message queue's processing loop.
+// Pending messages in the buffer will NOT be processed.
 func (mq *MessageQueue) Stop() {
 	mq.stopChan <- true
 }
 
-// PrepareStop will prevent new message from being added to the queue, and will return a channel that will be closed when the queue is empty
+// PrepareStop initiates a graceful shutdown. It prevents new messages from being accepted
+// and returns a channel that will be closed once all currently queued messages have been processed.
+// @spec-link [[mechanic_message_queue_management]]
 func (mq *MessageQueue) PrepareStop() chan bool {
 	mq.mu.Lock()
 	defer mq.mu.Unlock()
@@ -161,7 +167,8 @@ func (mq *MessageQueue) PrepareStop() chan bool {
 	return mq.doneChan
 }
 
-// Send a message to the message queue
+// Send adds a message to the queue for processing.
+// If the queue is in the process of stopping, the message is ignored.
 func (mq *MessageQueue) Send(msg *message.Message) {
 	mq.mu.Lock()
 	dontAccept := mq.dontAcceptNewMessages
@@ -173,7 +180,7 @@ func (mq *MessageQueue) Send(msg *message.Message) {
 	}
 }
 
-// Send a message to the message queue and forget (wont reply)
+// SendAndForget is an alias for Send, signifying that the caller does not expect a reply.
 func (mq *MessageQueue) SendAndForget(msg *message.Message) {
 	mq.mu.Lock()
 	dontAccept := mq.dontAcceptNewMessages
@@ -185,22 +192,24 @@ func (mq *MessageQueue) SendAndForget(msg *message.Message) {
 	}
 }
 
+// GetExecutorChan returns the channel where the dispatcher listens for messages to process.
 func (mq *MessageQueue) GetExecutorChan() chan *message.Message {
 	return mq.executorChan
 }
 
+// GetExecutorReplyChan returns the channel where the dispatcher sends acknowledgments after processing.
 func (mq *MessageQueue) GetExecutorReplyChan() chan *message.Message {
 	return mq.executorReplyChan
 }
 
-// Length
+// Length returns the number of messages currently waiting in the queue.
 func (mq *MessageQueue) Length() int {
 	mq.mu.Lock()
 	defer mq.mu.Unlock()
 	return len(mq.messages)
 }
 
-// String
+// String returns a human-readable summary of the queue state.
 func (mq *MessageQueue) String() string {
 	return fmt.Sprintf("[MQ %s] Length: %d", mq.Name, mq.Length())
 }

@@ -42,8 +42,9 @@ type Message struct {
 // New creates a new Message instance with a unique request ID and default settings.
 // It initializes the emitted timestamp and sets the initial state to a request
 // that should be replied to, with no errors and a "not yet replied" status.
-// This function ensures that every message starts with a valid UUID for tracking.
-// It is the standard way to instantiate a message before sending it to a queue.
+// This function ensures that every message starts with a valid UUID for tracking
+// across distributed or concurrent components. It is the standard way to 
+// instantiate a message before sending it to a queue or another actor.
 func New() *Message {
 	return &Message{
 		RequestId:         uuid.New(),
@@ -58,7 +59,8 @@ func New() *Message {
 // Create generates a new Message populated with the provided content and methods.
 // It uses the New() function for base initialization and then assigns the
 // specific payload (Content), the TargetMethod to execute, and the CallbackMethod
-// to be notified upon completion or error.
+// to be notified upon completion or error. This helper streamlines message 
+// creation by combining allocation and field assignment in a single call.
 func Create(Content, TargetMethod, CallbackMethod interface{}) *Message {
 	msg := New()
 	msg.Content = Content

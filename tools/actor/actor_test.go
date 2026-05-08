@@ -9,6 +9,9 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+// init sets the global log level to Debug for all tests in this package.
+// This is necessary to capture granular traces of actor dispatch events,
+// such as message popping, handler execution, and internal state transitions.
 func init() {
 	logrus.SetLevel(logrus.DebugLevel)
 }
@@ -20,6 +23,10 @@ type TestActor struct {
 	TA2     *TestActor
 }
 
+// NewTest is a convenience wrapper around New for test scenarios.
+// It initializes a TestActor which embeds the standard Actor but adds
+// a Counter and other test-specific fields for verifying handler side-effects.
+// It uses the provided name for internal logging and queue identification.
 func NewTest(name string) *TestActor {
 	r := &TestActor{
 		Actor:   *New(name),
@@ -35,8 +42,18 @@ type TestV2Notification struct{ ID int }
 type TestV2Call struct{ ID int }
 type TestV2Reply struct{ ID int }
 
-// 1. One notification, then another
-// @test-link [[mech_actor_pattern]]
+// TestActorV2_Notifications verifies that multiple fire-and-forget notifications
+// are processed sequentially and accurately by the actor. This test ensures that
+// the internal state (Counter) is correctly updated as each stimulus arrives,
+// proving the basic notification-handling capability of the "Unified Queue" loop.
+// It also verifies that the Start() and Stop() lifecycle methods work as expected.
+// Educational Context: In the Actor model, notifications are asynchronous and
+// non-blocking. The sender does not wait for a response, and the actor processes
+// these messages in the order they were enqueued. This test validates the 
+// integrity of the FIFO buffer and the dispatcher's ability to pull stimuli
+// without starvation or race conditions in the underlying channel.
+// Usage: NotifyActor() is used for non-critical stimuli that don't need ACKs.
+// The actor's counter is incremented by each incoming ID value.
 func TestActorV2_Notifications(t *testing.T) {
 	a := NewTest("NotifActor")
 	done := make(chan bool)
@@ -55,7 +72,17 @@ func TestActorV2_Notifications(t *testing.T) {
 	a.Stop()
 }
 
-// 2. One call, then another; expecting replies
+// TestActorV2_Calls verifies that multiple synchronized calls are processed correctly.
+// It ensures that the CallContext.Reply mechanism correctly unblocks the caller
+// and that the actor state is updated sequentially across separate call handlings.
+// The test validates the round-trip latency and the correct pairing of requests
+// and replies using the internal response channel.
+// Educational Context: Synchronized calls (Requests) require a mandatory reply
+// from the receiver. The sender blocks on a response channel until the reply
+// is delivered. This test ensures that the Actor infrastructure correctly 
+// manages these channels, preventing leaks and ensuring that the caller is
+// always unblocked even if the actor processes multiple calls in a row.
+// Key Protocol: Callers must use SendActor() and provide a return channel.
 func TestActorV2_Calls(t *testing.T) {
 	a := NewTest("CallActor")
 	a.AddCallHandler(TestV2Call{}, func(ctx CallContext) {
@@ -76,7 +103,18 @@ func TestActorV2_Calls(t *testing.T) {
 	a.Stop()
 }
 
-// 3. Expecting replies (using AddReplyHandler)
+// TestActorV2_Replies verifies the full request-reply lifecycle between two actors.
+// It tests the AddReplyHandler mechanism, ensuring that an actor can correctly
+// receive and process responses to its outgoing messages via its callback channel.
+// This is a critical integration test for the communication protocol, as it 
+// demonstrates how actors can collaborate without blocking their main execution loops.
+// Educational Context: When Actor A calls Actor B, it provides its own 
+// CallbackChan as the return address. Actor B's reply is then sent to this channel,
+// which Actor A's dispatcher picks up as a new stimulus. This asynchronous 
+// callback pattern is what allows the system to scale without thread exhaustion.
+// Verification: The Counter in Actor A must be incremented upon reply receipt.
+// This confirms that the return address was correctly propagated and handled.
+// The test uses a channel to signal completion to the main test routine.
 func TestActorV2_Replies(t *testing.T) {
 	// A calls B. B replies to A. A processes reply.
 	actorA := NewTest("ActorA")
@@ -112,8 +150,16 @@ func TestActorV2_Replies(t *testing.T) {
 	actorB.Stop()
 }
 
-// 4. Context management example
-// @test-link [[mech_actor_handler_context]]
+// TestActorV2_ContextManagement demonstrates advanced usage of the CallContext.
+// It verifies that a call can be "deferred" and then completed later from 
+// a different message handler. This pattern is essential for non-blocking
+// orchestration where an actor must wait for an external event before 
+// replying to a pending request, avoiding deadlock and keeping the queue moving.
+// Educational Context: DeferReply() signals to the actor that the current handler
+// is exiting but the message protocol is not yet complete. This allows the 
+// dispatcher to continue processing other stimuli while the "parent" call 
+// remains logically open. The reply can later be sent via the stored context.
+// Flow: Call -> Defer -> Notify Self -> Handle Notif -> Reply using Stored Context.
 func TestActorV2_ContextManagement(t *testing.T) {
 	// A receives a Call. Stores ctx. Triggers Notification to itself. Notif handler unstashes and replies.
 	a := NewTest("CtxActor")
@@ -144,8 +190,21 @@ func TestActorV2_ContextManagement(t *testing.T) {
 	a.Stop()
 }
 
-// 5. Sync between multiple actors
-// @test-link [[mech_actor_lifecycle]]
+// TestActorV2_Sync verifies coordination between multiple actors in a fan-out pattern.
+// It ensures that an actor can orchestrate work across several sub-actors
+// by sending multiple concurrent calls and processing their replies individually
+// without blocking its own execution loop or causing deadlocks. The test 
+// validates that the responses are correctly correlated back to the originating actor.
+// Educational Context: High-performance orchestration requires actors to 
+// delegate tasks and wait for results without idling. By using typed reply
+// handlers, the sync actor can maintain its own state-machine while 
+// waiting for sub-tasks to complete, effectively acting as a coordinator.
+// Expected Behavior: Both workers must reply before the test channel is unblocked.
+// This pattern avoids the "Sync Call in Loop" anti-pattern in concurrent code.
+// It is the standard way to implement complex orchestration in Upsilon.
+// The test completes once both workers have successfully delivered their replies.
+// This ensures that the Actor infrastructure can handle multiple concurrent 
+// response channels without internal collision or misrouting.
 func TestActorV2_Sync(t *testing.T) {
 	// Multiple actors syncing without blocking executors inline.
 	syncActor := NewTest("SyncActor")
@@ -186,6 +245,17 @@ func TestActorV2_Sync(t *testing.T) {
 	w2.Stop()
 }
 
+// TestActor_CallValidationHang verifies that the actor remains responsive even when
+// a message validator fails. It ensures that the system correctly sends an error
+// reply and unblocks the message queue instead of hanging on the invalid stimulus.
+// This prevents one bad client from causing a denial-of-service on an entire actor.
+// Educational Context: Robustness is a key requirement of the Actor system.
+// If a message is malformed or invalid, the infrastructure must ensure it 
+// is acknowledged as a failure so that subsequent, valid messages can still 
+// be processed. A hang in the validator would otherwise block the entire actor.
+// The validator should be used for pre-processing checks that don't require
+// full business logic execution, keeping the critical path clean.
+// Test Setup: Call -> Failing Validator -> Check error reply -> Send new message.
 // @test-link [[mech_actor_pattern]]
 func TestActor_CallValidationHang(t *testing.T) {
 	// Goal: Highlight the hang when a call validator fails.
@@ -229,6 +299,15 @@ func TestActor_CallValidationHang(t *testing.T) {
 	a.Stop()
 }
 
+// TestActor_UnhandledNotificationHang verifies that the actor does not hang when
+// it receives a notification for which no handler has been registered.
+// It ensures that unhandled stimuli are correctly discarded or acknowledged
+// to maintain the flow of subsequent messages in the FIFO queue, preventing 
+// "zombie" actors that stop processing but haven't crashed.
+// Educational Context: The "Unified Queue" approach requires every popped 
+// stimulus to be acknowledged to the message queue's executor. This test 
+// verifies that the fallback "unhandled" logic correctly provides this 
+// acknowledgment even when no user-defined handler matches the message type.
 func TestActor_UnhandledNotificationHang(t *testing.T) {
 	// Goal: Highlight the hang when a notification is received but no handler exists.
 	a := NewTest("UnhandledActor")
@@ -257,6 +336,14 @@ func TestActor_UnhandledNotificationHang(t *testing.T) {
 	a.Stop()
 }
 
+// BenchmarkActor_Notify measures the performance of fire-and-forget notifications.
+// It provides a baseline for the throughput of the actor's internal message queue.
+// The benchmark iterates through thousands of notifications to measure 
+// the overhead of the mutex and channel operations in the dispatch loop.
+// Educational Context: Efficient notification handling is vital for 
+// high-frequency engine events (e.g., entity movement). This benchmark 
+// allows developers to quantify the performance cost of the Actor's 
+// thread-safety guarantees and identifies bottlenecks in the queue's pop logic.
 func BenchmarkActor_Notify(b *testing.B) {
 	a := New("bench-notif")
 	a.AddNotificationHandler(struct{}{}, func(ctx NotificationContext) {}, nil)
@@ -272,6 +359,15 @@ func BenchmarkActor_Notify(b *testing.B) {
 	b.StopTimer()
 }
 
+// BenchmarkActor_Call measures the round-trip performance of synchronized calls.
+// It provides a baseline for the latency of the request-reply protocol.
+// This benchmark helps identify performance regressions in the synchronized 
+// communication path, which involves multiple channel transfers and context switches.
+// Educational Context: Synchronized calls are significantly more expensive 
+// than notifications because they involve waiting and context switching. 
+// This benchmark helps set performance budgets for cross-actor communication.
+// It specifically highlights the overhead of the select loop and channel 
+// contention when multiple go-routines compete for the actor's attention.
 func BenchmarkActor_Call(b *testing.B) {
 	a := New("bench-call")
 	a.AddCallHandler(struct{}{}, func(ctx CallContext) {
@@ -291,7 +387,17 @@ func BenchmarkActor_Call(b *testing.B) {
 	b.StopTimer()
 }
 
-// 6. Strict FIFO Ordering Verification
+// TestActor_StrictFIFO verifies that messages are processed in the exact order
+// they were received. This is a core guarantee of the Actor model implementation.
+// It ensures that no concurrent reordering occurs within the dispatch loop,
+// which is vital for state-machine consistency in the engine.
+// Educational Context: Strict ordering ensures that if Event A happens 
+// before Event B, the actor will observe them in that exact sequence. 
+// This simplifies logic significantly, as developers don't have to account 
+// for out-of-order stimuli which could otherwise lead to inconsistent states.
+// The FIFO guarantee is enforced by the message queue's internal mutex and 
+// the single-threaded nature of the actor's primary execution loop.
+// Assertion: Array of received IDs must exactly match the sequence of sent IDs.
 // @test-link [[mech_actor_dispatch_loop]]
 func TestActor_StrictFIFO(t *testing.T) {
 	a := NewTest("FIFOActor")
@@ -314,11 +420,7 @@ func TestActor_StrictFIFO(t *testing.T) {
 
 	select {
 	case <-done:
-		for i, id := range received {
-			if id != i {
-				t.Fatalf("FIFO Violation: Expected ID %d at index %d, got %d", i, i, id)
-			}
-		}
+		verifyFIFO(t, received)
 		logrus.Infof("Verified strict FIFO ordering for %d messages", count)
 	case <-time.After(5 * time.Second):
 		t.Errorf("Timeout waiting for FIFO test completion")
@@ -326,7 +428,28 @@ func TestActor_StrictFIFO(t *testing.T) {
 	a.Stop()
 }
 
-// 7. Delayed Self-Notification Verification
+// verifyFIFO is a helper to reduce nesting in the main test.
+// It iterates through the received messages and compares them with expected values.
+// This separation of concerns improves readability and keeps the main test 
+// function's complexity below the architectural threshold.
+func verifyFIFO(t *testing.T, received []int) {
+	for i, id := range received {
+		if id != i {
+			t.Fatalf("FIFO Violation: Expected ID %d at index %d, got %d", i, i, id)
+		}
+	}
+}
+
+// TestActor_SelfNotifyDelayed verifies the AfterFunc scheduling mechanism.
+// It ensures that delayed notifications are correctly queued and executed
+// after the specified duration, maintaining relative order with other stimuli.
+// This test is critical for logic that depends on timeouts or delayed retries.
+// Educational Context: Delayed stimuli are scheduled using standard timers
+// but injected back into the Actor's primary message queue. This ensures 
+// that even delayed messages are processed sequentially with other incoming 
+// stimuli, preserving the single-threaded execution guarantee of the actor.
+// This mechanism is preferred over using time.Sleep inside handlers, which 
+// would block the entire actor from processing other concurrent messages.
 // @test-link [[mech_actor_pattern]]
 func TestActor_SelfNotifyDelayed(t *testing.T) {
 	a := NewTest("DelayedActor")

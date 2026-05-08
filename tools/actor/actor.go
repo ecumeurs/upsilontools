@@ -37,69 +37,7 @@ type ActorMethod interface {
 
 // --- NEW STRUCTURES (ISS-004) ---
 
-// NotificationContext wraps a message for fire-and-forget notification handlers.
-// It explicitly lacks Reply() or NoReply() to prevent protocol violations.
-// @spec-link [[mech_actor_handler_context]]
-type NotificationContext struct {
-	// Msg is the original incoming message.
-	// Constraint: Must not be mutated by the handler.
-	Msg *message.Message
-}
-
-// CallContext wraps a message for request-reply handlers.
-// It provides the necessary methods to complete the synchronized call safely.
-// @spec-link [[mech_actor_handler_context]]
-type CallContext struct {
-	// Msg is the original incoming message.
-	Msg   *message.Message
-	actor *Actor
-}
-
-// Reply sends a response back to the caller.
-// Goal: Completes the Call lifecycle.
-// Unknowns: Verify if Msg.Reply() generation is needed here or by the caller.
-func (c *CallContext) Reply(replyMsg *message.Message) {
-	if !c.Msg.ShouldBeRepliedTo {
-		c.actor.Logger.WithFields(logrus.Fields{
-			"message":      c.Msg.String(),
-			"message_type": reflect.TypeOf(c.Msg.TargetMethod).String()}).Warn("Reply called on a message that should not be replied to")
-		return
-	}
-	c.Msg.HasBeenReplied = true
-	if c.Msg.ReplyChan != nil {
-		c.Msg.ReplyChan <- replyMsg
-	}
-}
-
-// NoReply acknowledges the call but sends no payload.
-// Goal: Completes the Call lifecycle without returning data.
-func (c *CallContext) NoReply() {
-	if !c.Msg.ShouldBeRepliedTo {
-		c.actor.Logger.WithFields(logrus.Fields{
-			"message":      c.Msg.String(),
-			"message_type": reflect.TypeOf(c.Msg.TargetMethod).String()}).Warn("Reply called on a message that should not be replied to")
-	} else {
-		c.Msg.HasBeenReplied = true
-		if c.Msg.ReplyChan != nil {
-			c.Msg.ReplyChan <- c.Msg
-		}
-	}
-}
-
-// DeferReply marks the message as intentionally delayed.
-// Goal: Allows the handler to exit without triggering an "unhandled call" crash,
-// so the actor can reply later (e.g., after receiving a callback from another actor).
-// Context Compilation: Steps: 1. Mark Msg.HasBeenReplied = true. 2. Store ctx in Actor state.
-func (c *CallContext) DeferReply() {
-	c.Msg.HasBeenReplied = true
-}
-
-// ReplyContext wraps a message received as a reply.
-// It lacks Reply methods.
-type ReplyContext struct {
-	// Msg is the replied message from another actor.
-	Msg *message.Message
-}
+// --- EXTRACTED TO context.go ---
 
 // --- END NEW STRUCTURES ---
 
@@ -161,7 +99,11 @@ type Actor struct {
 	queue         messagequeue.MessageQueue
 	CallbackChan  chan *message.Message
 	stopper       chan bool
-	Logger        *logrus.Entry
+	// Logger provides foundational observability for the actor's operations.
+	// @spec-link [[requirement_req_observability_logging]]
+	Logger *logrus.Entry
+	// RequestLogger is a contextual logger for the currently processing message.
+	// @spec-link [[requirement_req_observability_logging]]
 	RequestLogger *logrus.Entry
 	methods       map[reflect.Type]ActorMethod
 	replies       map[reflect.Type]ActorMethod
@@ -182,7 +124,18 @@ type Actor struct {
 	NewReplyReceived   func(act *Actor, msg *message.Message)
 }
 
-// New
+// New creates and initializes a new Actor instance with the given name.
+// This constructor is the primary entry point for creating independent, 
+// concurrent processing units in the Upsilon ecosystem. It performs the 
+// following critical initializations:
+// 1. Allocates a unique name for the actor used in diagnostic logging.
+// 2. Initializes a FIFO message queue to handle incoming stimuli sequentially.
+// 3. Creates the callback channel for internal stimulus redirection.
+// 4. Initializes the various handler maps for modern and legacy protocols.
+// The actor is returned in an unstarted state; the caller is responsible 
+// for calling Start() to begin the internal dispatch loop. 
+// Intent: Standardize the creation of concurrent units within the Upsilon ecosystem
+// to ensure thread-safety, clear ownership, and predictable message-driven behavior.
 func New(name string) *Actor {
 	act := &Actor{
 		actorName:            name,
@@ -205,7 +158,9 @@ func New(name string) *Actor {
 	return act
 }
 
-// Add Method to the actor
+// AddMethod registers a legacy-style handler for a specific message type.
+// It includes a validator function and a handler function that returns whether the message was handled.
+// Deprecated: Use AddCallHandler or AddNotificationHandler for modern gated contexts.
 func (a *Actor) AddMethod(method interface{}, handler func(msg *message.Message) (handled bool), validator func(msg *message.Message) (errors []error)) {
 	a.Logger.WithFields(logrus.Fields{
 		"method": method,
@@ -224,7 +179,8 @@ func (a *Actor) AddMethod(method interface{}, handler func(msg *message.Message)
 	}
 }
 
-// Add Method to the actor
+// AddActorMethod registers a pre-implemented ActorMethod interface.
+// This allows for complex handlers that encapsulate their own validation and logic.
 func (a *Actor) AddActorMethod(mt ActorMethod) {
 	a.Logger.WithFields(logrus.Fields{
 		"method": mt.MethodType(),
@@ -238,7 +194,8 @@ func (a *Actor) AddActorMethod(mt ActorMethod) {
 	a.methods[mt.MethodType()] = mt
 }
 
-// Add Reply handler to the actor
+// AddReply registers a legacy-style handler for a reply message type.
+// Deprecated: Use AddReplyHandler for modern gated contexts.
 func (a *Actor) AddReply(method interface{}, handler func(msg *message.Message) (handled bool), validator func(msg *message.Message) (errors []error)) {
 	a.Logger.WithFields(logrus.Fields{
 		"reply": method,
@@ -257,7 +214,7 @@ func (a *Actor) AddReply(method interface{}, handler func(msg *message.Message) 
 	}
 }
 
-// Add Reply handler to the actor
+// AddActorReply registers a pre-implemented ActorMethod interface for reply handling.
 func (a *Actor) AddActorReply(mt ActorMethod) {
 	a.Logger.WithFields(logrus.Fields{
 		"reply": mt.MethodType(),
@@ -285,7 +242,8 @@ func (a *Actor) AddNotificationHandler(method interface{}, handler func(ctx Noti
 	a.notificationHandlers[t] = notificationHandlerImpl{handler: handler, validator: validator}
 }
 
-// AddCallHandler registers a synchronized request-reply handler.
+// AddCallHandler registers a synchronized request-reply handler using the CallContext.
+// This is the preferred way to handle messages that require a mandatory response.
 func (a *Actor) AddCallHandler(method interface{}, handler func(ctx CallContext), validator func(msg *message.Message) []error) {
 	t := reflect.TypeOf(method)
 	if _, ok := a.callHandlers[t]; ok {
@@ -295,7 +253,8 @@ func (a *Actor) AddCallHandler(method interface{}, handler func(ctx CallContext)
 	a.callHandlers[t] = callHandlerImpl{handler: handler, validator: validator}
 }
 
-// AddReplyHandler registers a handler for an incoming reply.
+// AddReplyHandler registers a handler for an incoming reply message using ReplyContext.
+// This allows the actor to react to responses from other actors in a type-safe way.
 func (a *Actor) AddReplyHandler(method interface{}, handler func(ctx ReplyContext), validator func(msg *message.Message) []error) {
 	t := reflect.TypeOf(method)
 	if _, ok := a.replyHandlers[t]; ok {
@@ -305,6 +264,7 @@ func (a *Actor) AddReplyHandler(method interface{}, handler func(ctx ReplyContex
 	a.replyHandlers[t] = replyHandlerImpl{handler: handler, validator: validator}
 }
 
+// Name returns the human-readable name of the actor.
 func (a *Actor) Name() string {
 	return a.actorName
 }
@@ -324,223 +284,7 @@ func (a *Actor) PrepareToStop() chan bool {
 // They are now owned by CallContext.
 
 // @spec-link [[mech_actor_dispatch_loop]]
-func (a *Actor) processReply(msg *message.Message) {
-	a.RequestLogger = a.Logger.WithFields(logrus.Fields{
-		"request_type": "reply",
-		"message":      msg.String(),
-		"message_type": msg.TargetString(),
-	})
-	if a.NewReplyReceived != nil {
-		a.NewReplyReceived(a, msg)
-	}
-
-	typ := reflect.TypeOf(msg.TargetMethod)
-	// special case ActorStop
-	if typ == reflect.TypeOf(ActorStop{}) {
-		a.RequestLogger.Debug("ActorStop received")
-		msg.TargetMethod = ActorAboutToStop{}
-		typ = reflect.TypeOf(msg.TargetMethod)
-		defer a.Stop()
-	}
-
-	if msg.HasError {
-		a.RequestLogger.WithFields(logrus.Fields{
-			"error": msg.ErrorMessage,
-		}).Error("Error received")
-	}
-
-	// Try new typed reply handler first
-	if rh, found := a.replyHandlers[typ]; found {
-		if rh.validator != nil && len(rh.validator(msg)) > 0 {
-			a.RequestLogger.Warn("Reply validation failed")
-			// Cannot "reply" to a reply. Just drop but ACK.
-			a.queue.GetExecutorReplyChan() <- msg
-			return
-		}
-		replyCtx := ReplyContext{Msg: msg}
-		rh.handler(replyCtx)
-		a.queue.GetExecutorReplyChan() <- msg
-		return
-	}
-
-	v, found := a.replies[typ]
-	if !found {
-		a.RequestLogger.Warn("Unexpected reply")
-		if a.CrashOnUnhandled {
-			typeName := "<nil>"
-			if typ != nil {
-				typeName = typ.String()
-			}
-			panic(fmt.Sprintf("Unhandled reply msg type %s", typeName))
-		}
-		a.queue.GetExecutorReplyChan() <- msg
-		return
-	}
-
-	if v.Validator(msg) != nil {
-		a.RequestLogger.Warn("Reply validation failed")
-		a.queue.GetExecutorReplyChan() <- msg
-		return // we can't reply to a reply anyway
-	}
-
-	if v.Handler(msg) {
-		a.queue.GetExecutorReplyChan() <- msg
-		return
-	} else {
-		a.RequestLogger.Warn("Unhandled reply")
-		a.queue.GetExecutorReplyChan() <- msg
-		return
-	}
-}
-
-// @spec-link [[mech_actor_dispatch_loop]]
-func (a *Actor) processMessage(msg *message.Message) {
-	a.RequestLogger = a.Logger.WithFields(logrus.Fields{
-		"request_type": "message",
-		"message":      msg.String(),
-		"message_type": msg.TargetString(),
-	})
-
-	if a.NewMessageReceived != nil {
-		a.NewMessageReceived(a, msg)
-	}
-	typ := reflect.TypeOf(msg.TargetMethod)
-	// special case ActorStop
-	if typ == reflect.TypeOf(ActorStop{}) {
-		a.RequestLogger.Debug("ActorStop received")
-		msg.TargetMethod = ActorAboutToStop{}
-		typ = reflect.TypeOf(msg.TargetMethod)
-		defer a.Stop()
-	}
-
-	if msg.HasError {
-		a.RequestLogger.WithFields(logrus.Fields{
-			"error": msg.ErrorMessage,
-		}).Error("Error received")
-	}
-
-	// Try Call handler
-	if ch, found := a.callHandlers[typ]; found {
-		if !msg.ShouldBeRepliedTo {
-			a.RequestLogger.Error("Message arrived as notification but is mapped as a call handler")
-			if a.CrashOnUnhandled {
-				panic(fmt.Sprintf("Protocol violation: %v dispatched as notification to CallHandler", typ))
-			}
-			return
-		}
-
-		callCtx := CallContext{Msg: msg, actor: a}
-
-		if ch.validator != nil && len(ch.validator(msg)) > 0 {
-			a.RequestLogger.Warn("Call validation failed")
-			rpl := msg.ReplyWithError("Call validation failed", "actor.call.validation")
-			callCtx.Reply(rpl)
-			a.queue.GetExecutorReplyChan() <- msg // Send ACK to queue to unblock
-			return
-		}
-
-		ch.handler(callCtx)
-
-		if !msg.HasBeenReplied {
-			a.RequestLogger.Error("Message should be replied to but has not been (missing DeferReply/Reply/NoReply)")
-			rpl := msg.ReplyWithError("Message should be replied to but has not been", "actor.reply.missing")
-			callCtx.Reply(rpl)
-		}
-		a.queue.GetExecutorReplyChan() <- msg
-		return
-	}
-
-	// Try Notification handler
-	if nh, found := a.notificationHandlers[typ]; found {
-		if msg.ShouldBeRepliedTo {
-			a.RequestLogger.Error("Message arrived as call but is mapped as a notification handler")
-			if a.CrashOnUnhandled {
-				panic(fmt.Sprintf("Protocol violation: %v dispatched as call to NotificationHandler", typ))
-			}
-			rpl := msg.ReplyWithError("Message is a notification but sent as a call", "actor.protocol.violation")
-			// Reply safely via internal mechanism
-			msg.HasBeenReplied = true
-			a.queue.GetExecutorReplyChan() <- rpl
-			return
-		}
-
-		if nh.validator != nil && len(nh.validator(msg)) > 0 {
-			a.RequestLogger.Warn("Notification validation failed")
-			return
-		}
-
-		notifCtx := NotificationContext{Msg: msg}
-		nh.handler(notifCtx)
-		msg.HasBeenReplied = true
-		a.queue.GetExecutorReplyChan() <- msg
-		return
-	}
-
-	// Legacy method logic or unhandled mechanism
-	v, found := a.methods[typ]
-	if !found {
-		// Ignore internal notifications mapping if they aren't explicitly caught
-		if typ == reflect.TypeOf(ActorStarted{}) || typ == reflect.TypeOf(ActorAboutToStop{}) {
-			a.queue.GetExecutorReplyChan() <- msg
-			return
-		}
-
-		a.RequestLogger.Warn("Unexpected message")
-		if msg.ShouldBeRepliedTo {
-			a.RequestLogger.Error("Unhandled call message")
-			if a.CrashOnUnhandled {
-				panic(fmt.Sprintf("Unhandled call: no handler registered for type %v", typ))
-			}
-			msg.HasBeenReplied = true
-			a.queue.GetExecutorReplyChan() <- msg.ReplyWithError("Unhandled message", "actor.message.unhandled")
-		} else {
-			a.RequestLogger.Error("Unhandled notification message")
-			if a.CrashOnUnhandled {
-				panic(fmt.Sprintf("Unhandled notification: no handler registered for type %v", typ))
-			}
-			msg.HasBeenReplied = true
-			a.queue.GetExecutorReplyChan() <- msg
-		}
-		return
-	}
-
-	if v.Validator(msg) != nil {
-		a.RequestLogger.Warn("Reply validation failed")
-		if msg.ShouldBeRepliedTo {
-			rpl := msg.ReplyWithError("Reply validation failed", "actor.reply.validation")
-			msg.HasBeenReplied = true
-			a.queue.GetExecutorReplyChan() <- rpl
-		}
-		return
-	}
-
-	if v.Handler(msg) {
-		if msg.ShouldBeRepliedTo {
-			if !msg.HasBeenReplied {
-				a.RequestLogger.Error("Message should be replied to but has not been")
-				rpl := msg.ReplyWithError("Message should be replied to but has not been", "actor.reply.missing")
-				msg.HasBeenReplied = true
-				a.queue.GetExecutorReplyChan() <- rpl
-			}
-		} else {
-			// Acknowledge notification
-			msg.HasBeenReplied = true
-			a.queue.GetExecutorReplyChan() <- msg
-		}
-		return
-	} else {
-		a.RequestLogger.Warn("Unhandled message")
-		if msg.ShouldBeRepliedTo {
-			msg.HasBeenReplied = true
-			a.queue.GetExecutorReplyChan() <- msg.ReplyWithError("Unhandled message", "actor.message.unhandled")
-		} else {
-			// Acknowledge unhandled notification to unblock the queue
-			msg.HasBeenReplied = true
-			a.queue.GetExecutorReplyChan() <- msg
-		}
-		return
-	}
-}
+// --- EXTRACTED TO dispatch.go ---
 
 // Start
 // @spec-link [[mech_actor_lifecycle]]
@@ -588,15 +332,18 @@ func (a *Actor) Start() {
 	}
 }
 
-// String
+// String returns a string representation of the actor for logging and debugging.
 func (a *Actor) String() string {
 	return fmt.Sprintf("[A %s]", a.actorName)
 }
 
+// GetQueue returns the underlying message queue of the actor.
 func (a *Actor) GetQueue() *messagequeue.MessageQueue {
 	return &a.queue
 }
 
+// SendActor sends a message to another actor and expects a response on the provided channel.
+// Goal: Initiate a request-reply lifecycle.
 func (a *Actor) SendActor(msg *message.Message, res chan *message.Message) {
 	if msg.CallbackMethod == nil {
 		panic(fmt.Sprintf("[%s] Protocol violation: SendActor called with nil CallbackMethod for message %s. Use NotifyActor for fire-and-forget.", a.Name(), msg.TargetString()))
@@ -611,6 +358,8 @@ func (a *Actor) SendActor(msg *message.Message, res chan *message.Message) {
 	a.queue.Send(msg)
 }
 
+// NotifyActor sends a fire-and-forget notification to another actor.
+// No response is expected, and the message is marked as such.
 func (a *Actor) NotifyActor(msg *message.Message) {
 	a.Logger.WithFields(logrus.Fields{
 		"message":      msg.String(),
@@ -647,12 +396,12 @@ func (a *Actor) SelfDispatchMessageDelayed(msg *message.Message, delay time.Dura
 	})
 }
 
-// PrintStack
+// PrintStack logs the current state of the actor's message queue for debugging.
 func (a *Actor) PrintStack() {
 	a.queue.PrintStack()
 }
 
-// GetCallbackChan
+// GetCallbackChan returns the channel used by the actor to receive callback responses.
 func (a *Actor) GetCallbackChan() chan *message.Message {
 	return a.CallbackChan
 }
