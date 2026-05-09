@@ -25,7 +25,7 @@
       },
       {
         "name": "local",
-        "base_url": "http://localhost:11434",
+        "base_url": "http://ollama:11434",
         "timeout_ms": 500
       },
       {
