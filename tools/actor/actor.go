@@ -62,10 +62,14 @@ type actorMethodImpl struct {
 	validator  func(msg *message.Message) (errors []error)
 }
 
+// MethodType returns the reflect.Type of the message this method handles.
+// This is used by the actor's dispatch loop to route messages to the correct handler.
 func (a actorMethodImpl) MethodType() reflect.Type {
 	return a.methodType
 }
 
+// Handler executes the logic for this method given a raw message.
+// It returns true if the message was successfully handled, false otherwise.
 func (a actorMethodImpl) Handler(msg *message.Message) (handled bool) {
 	if a.handler == nil {
 		return false
@@ -73,6 +77,8 @@ func (a actorMethodImpl) Handler(msg *message.Message) (handled bool) {
 	return a.handler(msg)
 }
 
+// Validator checks if the incoming message is structurally and semantically valid 
+// for this specific method. It returns a slice of errors if validation fails.
 func (a actorMethodImpl) Validator(msg *message.Message) (errors []error) {
 	if a.validator == nil {
 		return nil
@@ -269,9 +275,12 @@ func (a *Actor) Name() string {
 	return a.actorName
 }
 
+// Stop terminates the actor's message queue and signals background loops to exit.
+// This is the standard way to decommission an actor in the ecosystem.
 // @spec-link [[mech_actor_lifecycle]]
 func (a *Actor) Stop() {
 	a.queue.Stop()
+	close(a.stopper)
 }
 
 // PrepareToStop will disconnect the actor from the message queue and return a channel that will tell when all pending messages have been processed.
@@ -286,49 +295,56 @@ func (a *Actor) PrepareToStop() chan bool {
 // @spec-link [[mech_actor_dispatch_loop]]
 // --- EXTRACTED TO dispatch.go ---
 
-// Start
+// Start begins the actor's internal background loops for message processing.
+// It initializes the message queue, starts the callback redirection loop, 
+// and begins the main dispatch loop.
 // @spec-link [[mech_actor_lifecycle]]
 func (a *Actor) Start() {
 	a.queue.Start()
+	go a.runCallbackRedirectLoop()
+	go a.runMainDispatchLoop()
 
-	// Redirect replies to the message queue to avoid deadlocks
-	go func() {
-		for {
-			select {
-			case msg := <-a.CallbackChan:
-				a.queue.Send(msg)
-			case <-a.stopper:
-				return
-			}
-		}
-	}()
-
-	go func() {
-		a.Logger.Info("Actor started")
-		done := false
-		// @spec-link [[mech_actor_dispatch_loop]]
-		for !done {
-			select {
-			case msg := <-a.queue.GetExecutorChan():
-				if msg.Type == message.Reply {
-					a.Logger.WithFields(logrus.Fields{
-						"message":      msg.String(),
-						"message_type": msg.TargetString()}).Debug("About to process reply from queue")
-					a.processReply(msg)
-				} else {
-					a.Logger.WithFields(logrus.Fields{
-						"message":      msg.String(),
-						"message_type": msg.TargetString()}).Debug("About to process message from queue")
-					a.processMessage(msg)
-				}
-			case <-a.stopper:
-				done = true
-			}
-		}
-		a.Logger.Info("Actor Stopped")
-	}()
 	if a.NotifyStart {
 		a.NotifyActor(message.Create(nil, ActorStarted{}, nil))
+	}
+}
+
+// runCallbackRedirectLoop redirects internal stimuli from CallbackChan to the main queue.
+// This prevents deadlocks when an actor's handler sends a message to itself.
+func (a *Actor) runCallbackRedirectLoop() {
+	for {
+		select {
+		case msg := <-a.CallbackChan:
+			a.queue.Send(msg)
+		case <-a.stopper:
+			return
+		}
+	}
+}
+
+// runMainDispatchLoop is the primary execution thread for the actor.
+// It pulls messages from the queue and routes them to processReply or processMessage.
+// @spec-link [[mech_actor_dispatch_loop]]
+func (a *Actor) runMainDispatchLoop() {
+	a.Logger.Info("Actor started")
+	for {
+		select {
+		case msg := <-a.queue.GetExecutorChan():
+			if msg.Type == message.Reply {
+				a.Logger.WithFields(logrus.Fields{
+					"message":      msg.String(),
+					"message_type": msg.TargetString()}).Debug("About to process reply from queue")
+				a.processReply(msg)
+			} else {
+				a.Logger.WithFields(logrus.Fields{
+					"message":      msg.String(),
+					"message_type": msg.TargetString()}).Debug("About to process message from queue")
+				a.processMessage(msg)
+			}
+		case <-a.stopper:
+			a.Logger.Info("Actor Stopped")
+			return
+		}
 	}
 }
 

@@ -86,62 +86,73 @@ func (mq *MessageQueue) Start() {
 		for {
 			select {
 			case msg := <-mq.inputChan:
-				mq.mu.Lock()
-				if mq.dontAcceptNewMessages {
-					mq.mu.Unlock()
-					mq.logger.WithField("message", msg.String()).Debug("Message queue is stopping, ignoring message")
-					continue
-				}
-				mq.logger.WithFields(logrus.Fields{
-					"message":      msg.String(),
-					"message_type": msg.TargetString()}).Debug("Received message")
-				mq.messages = append(mq.messages, msg)
-				if mq.currentMessage == nil {
-					mq.currentMessage = msg
-					go func(msg *message.Message) {
-						mq.logger.WithFields(logrus.Fields{
-							"message":      msg.String(),
-							"message_type": msg.TargetString()}).Debug("Executing message")
-
-						mq.executorChan <- msg
-					}(msg)
-				}
-				mq.mu.Unlock()
+				mq.handleIncomingMessage(msg)
 			case msg := <-mq.executorReplyChan:
-				mq.logger.WithFields(logrus.Fields{
-					"message":      msg.String(),
-					"message_type": msg.TargetString()}).Debug("Execution Ack Received")
-
-				mq.mu.Lock()
-				mq.currentMessage = nil
-				if len(mq.messages) == 0 {
-					mq.mu.Unlock()
-					mq.logger.Warn("Received Execution Ack but message queue is empty (phantom ACK). Ignoring.")
-					continue
-				}
-				mq.messages = mq.messages[1:]
-
-				if len(mq.messages) > 0 {
-					mq.currentMessage = mq.messages[0]
-					go func(msg *message.Message) {
-						mq.logger.WithFields(logrus.Fields{
-							"message":      msg.String(),
-							"message_type": msg.TargetString()}).Debug("Executing New Message")
-						mq.executorChan <- msg
-					}(mq.currentMessage)
-				} else {
-					mq.logger.Debug("Message queue is empty")
-					if mq.dontAcceptNewMessages {
-						mq.doneChan <- true
-					}
-				}
-				mq.mu.Unlock()
+				mq.handleExecutionAcknowledgment(msg)
 			case <-mq.stopChan:
 				mq.logger.Info("Stopping message queue")
 				return
 			}
 		}
 	}()
+}
+
+// handleIncomingMessage processes a new stimulus added to the queue.
+// It appends the message to the internal buffer and triggers execution if the queue is idle.
+func (mq *MessageQueue) handleIncomingMessage(msg *message.Message) {
+	mq.mu.Lock()
+	defer mq.mu.Unlock()
+
+	if mq.dontAcceptNewMessages {
+		mq.logger.WithField("message", msg.String()).Debug("Message queue is stopping, ignoring message")
+		return
+	}
+
+	mq.logger.WithFields(logrus.Fields{
+		"message":      msg.String(),
+		"message_type": msg.TargetString()}).Debug("Received message")
+
+	mq.messages = append(mq.messages, msg)
+	if mq.currentMessage == nil {
+		mq.currentMessage = msg
+		go mq.dispatchToExecutor(msg)
+	}
+}
+
+// handleExecutionAcknowledgment handles the signal that the previous message has been processed.
+// It advances the FIFO buffer and triggers the next message if available.
+func (mq *MessageQueue) handleExecutionAcknowledgment(msg *message.Message) {
+	mq.logger.WithFields(logrus.Fields{
+		"message":      msg.String(),
+		"message_type": msg.TargetString()}).Debug("Execution Ack Received")
+
+	mq.mu.Lock()
+	defer mq.mu.Unlock()
+
+	mq.currentMessage = nil
+	if len(mq.messages) == 0 {
+		mq.logger.Warn("Received Execution Ack but message queue is empty (phantom ACK). Ignoring.")
+		return
+	}
+	mq.messages = mq.messages[1:]
+
+	if len(mq.messages) > 0 {
+		mq.currentMessage = mq.messages[0]
+		go mq.dispatchToExecutor(mq.currentMessage)
+	} else {
+		mq.logger.Debug("Message queue is empty")
+		if mq.dontAcceptNewMessages {
+			mq.doneChan <- true
+		}
+	}
+}
+
+// dispatchToExecutor sends a message to the executor channel in a background goroutine.
+func (mq *MessageQueue) dispatchToExecutor(msg *message.Message) {
+	mq.logger.WithFields(logrus.Fields{
+		"message":      msg.String(),
+		"message_type": msg.TargetString()}).Debug("Executing message")
+	mq.executorChan <- msg
 }
 
 // Stop immediately terminates the message queue's processing loop.
