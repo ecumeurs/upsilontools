@@ -1,15 +1,54 @@
 {
+  "DocsDir": "",
+  "CodePaths": null,
+  "SupportedExtensions": {
+    ".c": true,
+    ".cpp": true,
+    ".cs": true,
+    ".go": true,
+    ".h": true,
+    ".hpp": true,
+    ".java": true,
+    ".js": true,
+    ".kt": true,
+    ".php": true,
+    ".py": true,
+    ".rb": true,
+    ".rs": true,
+    ".scala": true,
+    ".swift": true,
+    ".ts": true,
+    ".vue": true
+  },
+  "DiscoveryMethod": "walk",
+  "OrphanExcludedTypes": {
+    "MODULE": true,
+    "SPECIFICATION": true,
+    "USECASE": true,
+    "USER_STORY": true
+  },
+  "HierarchicalOrphanCheck": true,
+  "BusinessLayerException": true,
+  "GitignorePatterns": [
+    "node_modules/",
+    ".git/",
+    "dist/",
+    "build/",
+    "target/",
+    ".vscode/"
+  ],
+  "MaxDepth": 10,
   "docs_path": "docs/",
   "diff_similarity_threshold": 0.85,
   "bloating_factor": {
     "default": 0.8,
     "type_overrides": {
+      "API": 0.1,
+      "MODULE": 0.3,
       "REQUIREMENT": 0.3,
       "SPECIFICATION": 0.3,
-      "MODULE": 0.3,
       "USECASE": 0.1,
-      "USER_STORY": 0.1,
-      "API": 0.1
+      "USER_STORY": 0.1
     }
   },
   "model": "llama3.2",
@@ -30,51 +69,47 @@
       },
       {
         "name": "ide_agent",
+        "base_url": "",
+        "timeout_ms": 0,
         "type": "passthrough"
       }
     ],
     "models": {
-      "llama3.2": {
+      "deepseek-r1:7b": {
         "tasks": [
-          "audit_bloat",
-          "intent_extract",
-          "snapshot"
+          "code_analysis",
+          "text_analysis",
+          "text_generation"
         ]
       },
       "llama3.1:8b": {
         "tasks": [
-          "audit_bloat",
-          "intent_extract",
-          "snapshot",
-          "dissect",
-          "recon"
+          "text_analysis",
+          "text_generation",
+          "code_analysis"
         ]
       },
-      "deepseek-r1:7b": {
+      "llama3.2": {
         "tasks": [
-          "audit_code",
-          "compare",
-          "congruence",
-          "reconcile",
-          "fix_split",
-          "audit_bloat",
-          "intent_extract",
-          "snapshot"
-        ]
-      },
-      "qwen2.5-coder:14b": {
-        "tasks": [
-          "dissect",
-          "recon",
-          "snapshot"
+          "text_analysis",
+          "text_generation"
         ]
       },
       "nomic-embed-text": {
         "tasks": [
           "embed"
         ]
+      },
+      "qwen2.5-coder:14b": {
+        "tasks": [
+          "code_analysis",
+          "text_generation"
+        ]
       }
     },
-    "fallback_model": "llama3.2"
-  }
+    "fallback_model": "llama3.2",
+    "health_ttl_ms": 300000,
+    "model_ttl_ms": 300000
+  },
+  "DocsDirOverride": ""
 }
