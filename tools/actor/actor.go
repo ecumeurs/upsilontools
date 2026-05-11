@@ -3,6 +3,7 @@ package actor
 import (
 	"fmt"
 	"reflect"
+	"sync"
 	"time"
 
 	"github.com/ecumeurs/upsilontools/tools/messagequeue"
@@ -128,6 +129,8 @@ type Actor struct {
 	// NOTE: dedicated triggers, should be mostly unused or to provide more information in logs.
 	NewMessageReceived func(act *Actor, msg *message.Message)
 	NewReplyReceived   func(act *Actor, msg *message.Message)
+
+	stopOnce sync.Once
 }
 
 // New creates and initializes a new Actor instance with the given name.
@@ -280,7 +283,9 @@ func (a *Actor) Name() string {
 // @spec-link [[mech_actor_lifecycle]]
 func (a *Actor) Stop() {
 	a.queue.Stop()
-	close(a.stopper)
+	a.stopOnce.Do(func() {
+		close(a.stopper)
+	})
 }
 
 // PrepareToStop will disconnect the actor from the message queue and return a channel that will tell when all pending messages have been processed.

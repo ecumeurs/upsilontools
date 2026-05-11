@@ -24,6 +24,8 @@ type MessageQueue struct {
 	currentMessage *message.Message
 
 	messages []*message.Message
+
+	stopOnce sync.Once
 }
 
 // New creates a new MessageQueue instance with the given name.
@@ -158,7 +160,9 @@ func (mq *MessageQueue) dispatchToExecutor(msg *message.Message) {
 // Stop immediately terminates the message queue's processing loop.
 // Pending messages in the buffer will NOT be processed.
 func (mq *MessageQueue) Stop() {
-	mq.stopChan <- true
+	mq.stopOnce.Do(func() {
+		close(mq.stopChan)
+	})
 }
 
 // PrepareStop initiates a graceful shutdown. It prevents new messages from being accepted
