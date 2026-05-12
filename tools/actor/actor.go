@@ -294,12 +294,6 @@ func (a *Actor) PrepareToStop() chan bool {
 	return a.queue.PrepareStop()
 }
 
-// Legacy Reply / NoReply deleted per ISS-004 to enforce Context usage.
-// They are now owned by CallContext.
-
-// @spec-link [[mech_actor_dispatch_loop]]
-// --- EXTRACTED TO dispatch.go ---
-
 // Start begins the actor's internal background loops for message processing.
 // It initializes the message queue, starts the callback redirection loop, 
 // and begins the main dispatch loop.
