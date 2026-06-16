@@ -6,8 +6,7 @@ version: 1.0
 tags: [governance, contract, tools]
 parents:
   - [[shared:contract_upsilon_contract]]
-dependents:
-  - [[requirement_req_observability_logging]]
+dependents: []
 human_name: UpsilonTools Contract
 type: CONTRACT
 priority: 1
