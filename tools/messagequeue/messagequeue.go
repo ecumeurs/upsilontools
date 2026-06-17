@@ -154,7 +154,11 @@ func (mq *MessageQueue) dispatchToExecutor(msg *message.Message) {
 	mq.logger.WithFields(logrus.Fields{
 		"message":      msg.String(),
 		"message_type": msg.TargetString()}).Debug("Executing message")
-	mq.executorChan <- msg
+	select {
+	case mq.executorChan <- msg:
+	case <-mq.stopChan:
+		mq.logger.WithField("message", msg.String()).Debug("Message queue is stopped, dropping dispatch")
+	}
 }
 
 // Stop immediately terminates the message queue's processing loop.
@@ -184,27 +188,26 @@ func (mq *MessageQueue) PrepareStop() chan bool {
 
 // Send adds a message to the queue for processing.
 // If the queue is in the process of stopping, the message is ignored.
+// Sending also unblocks once the queue is stopped, so callers never hang
+// on a queue whose processing loop has already exited.
 func (mq *MessageQueue) Send(msg *message.Message) {
 	mq.mu.Lock()
 	dontAccept := mq.dontAcceptNewMessages
 	mq.mu.Unlock()
-	if !dontAccept {
-		mq.inputChan <- msg
-	} else {
+	if dontAccept {
 		mq.logger.WithField("message", msg.String()).Debug("Message queue is stopping, ignoring message")
+		return
+	}
+	select {
+	case mq.inputChan <- msg:
+	case <-mq.stopChan:
+		mq.logger.WithField("message", msg.String()).Debug("Message queue is stopped, ignoring message")
 	}
 }
 
 // SendAndForget is an alias for Send, signifying that the caller does not expect a reply.
 func (mq *MessageQueue) SendAndForget(msg *message.Message) {
-	mq.mu.Lock()
-	dontAccept := mq.dontAcceptNewMessages
-	mq.mu.Unlock()
-	if !dontAccept {
-		mq.inputChan <- msg
-	} else {
-		mq.logger.WithField("message", msg.String()).Debug("Message queue is stopping, ignoring message")
-	}
+	mq.Send(msg)
 }
 
 // GetExecutorChan returns the channel where the dispatcher listens for messages to process.
@@ -215,6 +218,17 @@ func (mq *MessageQueue) GetExecutorChan() chan *message.Message {
 // GetExecutorReplyChan returns the channel where the dispatcher sends acknowledgments after processing.
 func (mq *MessageQueue) GetExecutorReplyChan() chan *message.Message {
 	return mq.executorReplyChan
+}
+
+// Ack sends an execution acknowledgment back to the queue.
+// It returns immediately without blocking if the queue has already been
+// stopped, since nothing will ever read executorReplyChan again in that case.
+func (mq *MessageQueue) Ack(msg *message.Message) {
+	select {
+	case mq.executorReplyChan <- msg:
+	case <-mq.stopChan:
+		mq.logger.WithField("message", msg.String()).Debug("Message queue is stopped, dropping execution ack")
+	}
 }
 
 // Length returns the number of messages currently waiting in the queue.

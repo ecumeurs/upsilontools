@@ -41,12 +41,12 @@ func (a *Actor) processReply(msg *message.Message) {
 		if rh.validator != nil && len(rh.validator(msg)) > 0 {
 			a.RequestLogger.Warn("Reply validation failed")
 			// Cannot "reply" to a reply. Just drop but ACK.
-			a.queue.GetExecutorReplyChan() <- msg
+			a.queue.Ack(msg)
 			return
 		}
 		replyCtx := ReplyContext{Msg: msg}
 		rh.handler(replyCtx)
-		a.queue.GetExecutorReplyChan() <- msg
+		a.queue.Ack(msg)
 		return
 	}
 
@@ -60,22 +60,22 @@ func (a *Actor) processReply(msg *message.Message) {
 			}
 			panic(fmt.Sprintf("Unhandled reply msg type %s", typeName))
 		}
-		a.queue.GetExecutorReplyChan() <- msg
+		a.queue.Ack(msg)
 		return
 	}
 
 	if v.Validator(msg) != nil {
 		a.RequestLogger.Warn("Reply validation failed")
-		a.queue.GetExecutorReplyChan() <- msg
+		a.queue.Ack(msg)
 		return // we can't reply to a reply anyway
 	}
 
 	if v.Handler(msg) {
-		a.queue.GetExecutorReplyChan() <- msg
+		a.queue.Ack(msg)
 		return
 	} else {
 		a.RequestLogger.Warn("Unhandled reply")
-		a.queue.GetExecutorReplyChan() <- msg
+		a.queue.Ack(msg)
 		return
 	}
 }
@@ -124,7 +124,7 @@ func (a *Actor) processMessage(msg *message.Message) {
 			a.RequestLogger.Warn("Call validation failed")
 			rpl := msg.ReplyWithError("Call validation failed", "actor.call.validation")
 			callCtx.Reply(rpl)
-			a.queue.GetExecutorReplyChan() <- msg // Send ACK to queue to unblock
+			a.queue.Ack(msg) // Send ACK to queue to unblock
 			return
 		}
 
@@ -135,7 +135,7 @@ func (a *Actor) processMessage(msg *message.Message) {
 			rpl := msg.ReplyWithError("Message should be replied to but has not been", "actor.reply.missing")
 			callCtx.Reply(rpl)
 		}
-		a.queue.GetExecutorReplyChan() <- msg
+		a.queue.Ack(msg)
 		return
 	}
 
@@ -149,7 +149,7 @@ func (a *Actor) processMessage(msg *message.Message) {
 			rpl := msg.ReplyWithError("Message is a notification but sent as a call", "actor.protocol.violation")
 			// Reply safely via internal mechanism
 			msg.HasBeenReplied = true
-			a.queue.GetExecutorReplyChan() <- rpl
+			a.queue.Ack(rpl)
 			return
 		}
 
@@ -161,7 +161,7 @@ func (a *Actor) processMessage(msg *message.Message) {
 		notifCtx := NotificationContext{Msg: msg}
 		nh.handler(notifCtx)
 		msg.HasBeenReplied = true
-		a.queue.GetExecutorReplyChan() <- msg
+		a.queue.Ack(msg)
 		return
 	}
 
@@ -170,7 +170,7 @@ func (a *Actor) processMessage(msg *message.Message) {
 	if !found {
 		// Ignore internal notifications mapping if they aren't explicitly caught
 		if typ == reflect.TypeOf(ActorStarted{}) || typ == reflect.TypeOf(ActorAboutToStop{}) {
-			a.queue.GetExecutorReplyChan() <- msg
+			a.queue.Ack(msg)
 			return
 		}
 
@@ -181,14 +181,14 @@ func (a *Actor) processMessage(msg *message.Message) {
 				panic(fmt.Sprintf("Unhandled call: no handler registered for type %v", typ))
 			}
 			msg.HasBeenReplied = true
-			a.queue.GetExecutorReplyChan() <- msg.ReplyWithError("Unhandled message", "actor.message.unhandled")
+			a.queue.Ack(msg.ReplyWithError("Unhandled message", "actor.message.unhandled"))
 		} else {
 			a.RequestLogger.Error("Unhandled notification message")
 			if a.CrashOnUnhandled {
 				panic(fmt.Sprintf("Unhandled notification: no handler registered for type %v", typ))
 			}
 			msg.HasBeenReplied = true
-			a.queue.GetExecutorReplyChan() <- msg
+			a.queue.Ack(msg)
 		}
 		return
 	}
@@ -198,7 +198,7 @@ func (a *Actor) processMessage(msg *message.Message) {
 		if msg.ShouldBeRepliedTo {
 			rpl := msg.ReplyWithError("Reply validation failed", "actor.reply.validation")
 			msg.HasBeenReplied = true
-			a.queue.GetExecutorReplyChan() <- rpl
+			a.queue.Ack(rpl)
 		}
 		return
 	}
@@ -209,23 +209,23 @@ func (a *Actor) processMessage(msg *message.Message) {
 				a.RequestLogger.Error("Message should be replied to but has not been")
 				rpl := msg.ReplyWithError("Message should be replied to but has not been", "actor.reply.missing")
 				msg.HasBeenReplied = true
-				a.queue.GetExecutorReplyChan() <- rpl
+				a.queue.Ack(rpl)
 			}
 		} else {
 			// Acknowledge notification
 			msg.HasBeenReplied = true
-			a.queue.GetExecutorReplyChan() <- msg
+			a.queue.Ack(msg)
 		}
 		return
 	} else {
 		a.RequestLogger.Warn("Unhandled message")
 		if msg.ShouldBeRepliedTo {
 			msg.HasBeenReplied = true
-			a.queue.GetExecutorReplyChan() <- msg.ReplyWithError("Unhandled message", "actor.message.unhandled")
+			a.queue.Ack(msg.ReplyWithError("Unhandled message", "actor.message.unhandled"))
 		} else {
 			// Acknowledge unhandled notification to unblock the queue
 			msg.HasBeenReplied = true
-			a.queue.GetExecutorReplyChan() <- msg
+			a.queue.Ack(msg)
 		}
 		return
 	}
