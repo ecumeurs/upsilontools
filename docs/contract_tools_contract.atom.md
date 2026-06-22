@@ -6,13 +6,14 @@ version: 1.0
 tags: [governance, contract, tools]
 parents:
   - [[shared:contract_upsilon_contract]]
-dependents: []
+dependents:
+  - [[requirement_observability_logging]]
 human_name: UpsilonTools Contract
 type: CONTRACT
 priority: 1
 ---
 
-# New Atom
+# UpsilonTools Contract
 
 ## INTENT
 Establish the technical standards for shared utilities and architectural patterns.
@@ -24,7 +25,7 @@ Establish the technical standards for shared utilities and architectural pattern
 - **Dependency Isolation:** Minimize external dependencies to keep the toolset lightweight and easy to integrate.
 
 ## TECHNICAL INTERFACE
-- **Code Tag:** `@spec-link [[tools_contract]]`
-- **Related Atoms:** `[[shared:upsilon_contract]]`
+- **Code Tag:** `@spec-link [[contract_tools_contract]]`
+- **Related Atoms:** `[[shared:contract_upsilon_contract]]`
 
 ## EXPECTATION

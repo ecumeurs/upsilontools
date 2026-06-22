@@ -1,11 +1,11 @@
 ---
-id: requirement_req_observability_logging
+id: requirement_observability_logging
 status: STABLE
 human_name: "Observability & Logging"
 type: REQUIREMENT
 layer: BUSINESS
 dependents:
-  - [[mechanic_mech_logger_initialization]]
+  - [[mechanic_logger_initialization]]
 version: 1.0
 priority: 2
 tags: [observability, logging]
@@ -13,7 +13,7 @@ parents:
   - [[contract_tools_contract]]
 ---
 
-# New Atom
+# Observability & Logging
 
 ## INTENT
 Ensure uniform observability across all Upsilon services by providing a standardized logging interface.

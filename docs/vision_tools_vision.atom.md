@@ -12,7 +12,7 @@ priority: 1
 dependents: []
 ---
 
-# New Atom
+# UpsilonTools Vision
 
 ## INTENT
 Define the vision for UpsilonTools as the shared utility library for the TRPG ecosystem.
@@ -25,7 +25,7 @@ Define the vision for UpsilonTools as the shared utility library for the TRPG ec
   - **Quality:** Maintain high test coverage for foundational utilities to ensure system-wide stability.
 
 ## TECHNICAL INTERFACE
-- **Code Tag:** `@spec-link [[tools_vision]]`
-- **Related Atoms:** `[[shared:upsilon_vision]]`
+- **Code Tag:** `@spec-link [[vision_tools_vision]]`
+- **Related Atoms:** `[[shared:vision_upsilon_vision]]`
 
 ## EXPECTATION

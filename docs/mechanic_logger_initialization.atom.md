@@ -1,5 +1,5 @@
 ---
-id: mechanic_mech_logger_initialization
+id: mechanic_logger_initialization
 status: DRAFT
 version: 1.0
 priority: 3
@@ -7,12 +7,12 @@ dependents: []
 layer: IMPLEMENTATION
 tags: [logging, initialization]
 parents:
-  - [[requirement_req_observability_logging]]
+  - [[requirement_observability_logging]]
 human_name: "Logger Initialization Mechanic"
 type: MECHANIC
 ---
 
-# New Atom
+# Logger Initialization Mechanic
 
 ## INTENT
 Initialize global and local loggers with specific formatters and output targets using Logrus.
@@ -23,7 +23,7 @@ Initialize global and local loggers with specific formatters and output targets 
 - **Sub-Loggers:** Creates new Logrus instances with the same logic as global inits but returning the instance.
 
 ## TECHNICAL INTERFACE
-- **Code Tag:** `@spec-link [[mech_logger_initialization]]`
+- **Code Tag:** `@spec-link [[mechanic_logger_initialization]]`
 - **Functions:** `InitConsole`, `InitFile`, `InitSubLogger`, `InitSubFile`
 
 ## EXPECTATION
