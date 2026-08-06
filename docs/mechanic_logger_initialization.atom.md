@@ -7,7 +7,7 @@ dependents: []
 layer: IMPLEMENTATION
 tags: [logging, initialization]
 parents:
-  - [[requirement_observability_logging]]
+  - [[shared:req_tech_debt_backlog]]
 human_name: "Logger Initialization Mechanic"
 type: MECHANIC
 ---

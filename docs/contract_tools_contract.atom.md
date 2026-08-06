@@ -4,10 +4,8 @@ status: STABLE
 layer: BUSINESS
 version: 1.0
 tags: [governance, contract, tools]
-parents:
-  - [[shared:contract_upsilon_contract]]
-dependents:
-  - [[requirement_observability_logging]]
+parents: []
+dependents: []
 human_name: UpsilonTools Contract
 type: CONTRACT
 priority: 1

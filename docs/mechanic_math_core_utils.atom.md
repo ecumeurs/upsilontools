@@ -6,7 +6,7 @@ layer: IMPLEMENTATION
 priority: 3
 tags: math,utility
 parents:
-  - [[shared:vision_upsilon_vision]]
+  - [[shared:req_tech_debt_backlog]]
 dependents: []
 human_name: Core Math Utilities
 version: 1.0

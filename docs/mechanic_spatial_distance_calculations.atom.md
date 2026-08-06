@@ -5,7 +5,7 @@ human_name: Spatial Distance Calculations
 type: MECHANIC
 tags: math,spatial,distance
 parents:
-  - [[shared:vision_upsilon_vision]]
+  - [[shared:req_tech_debt_backlog]]
 layer: IMPLEMENTATION
 version: 1.0
 priority: 3

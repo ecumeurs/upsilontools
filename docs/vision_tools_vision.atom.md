@@ -4,8 +4,7 @@ status: STABLE
 human_name: UpsilonTools Vision
 type: VISION
 tags: [governance, vision, tools]
-parents:
-  - [[shared:vision_upsilon_vision]]
+parents: []
 layer: BUSINESS
 version: 1.0
 priority: 1

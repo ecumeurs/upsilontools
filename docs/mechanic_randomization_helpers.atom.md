@@ -8,7 +8,7 @@ type: MECHANIC
 version: 1.0
 tags: random,utility
 parents:
-  - [[shared:vision_upsilon_vision]]
+  - [[shared:req_tech_debt_backlog]]
 layer: IMPLEMENTATION
 ---
 

@@ -107,10 +107,8 @@ type Actor struct {
 	CallbackChan  chan *message.Message
 	stopper       chan bool
 	// Logger provides foundational observability for the actor's operations.
-	// @spec-link [[requirement_observability_logging]]
 	Logger *logrus.Entry
 	// RequestLogger is a contextual logger for the currently processing message.
-	// @spec-link [[requirement_observability_logging]]
 	RequestLogger *logrus.Entry
 	methods       map[reflect.Type]ActorMethod
 	replies       map[reflect.Type]ActorMethod
